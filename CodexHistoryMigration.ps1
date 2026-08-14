@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet("Export", "Import", "Inspect", "List")]
+    [ValidateSet("Export", "Import", "Inspect", "List", "SetProvider", "Delete")]
     [string]$Mode,
 
     [string]$ArchivePath = "",
@@ -31,7 +31,7 @@ $ErrorActionPreference = "Stop"
 
 # 工具和归档格式版本用于拒绝不兼容的迁移包。
 $script:ToolName = "CodexHistoryMigration"
-$script:ToolVersion = "1.1.0"
+$script:ToolVersion = "1.2.0"
 $script:SchemaVersion = 1
 $script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $script:SensitiveTopLevelNames = @(
@@ -81,7 +81,7 @@ function Read-SessionSelection {
         throw "Select at least one session."
     }
 
-    return $ids
+    return ,$ids
 }
 
 # 返回不要求目标已经存在的绝对路径。
@@ -841,8 +841,8 @@ function New-ProviderRewrittenSessionFile {
     }
 }
 
-# 读取 transcript 的稳定会话 ID，不依赖 provider 字段是否存在。
-function Get-HistorySessionId {
+# 读取 transcript 的稳定会话 ID 和 provider 元数据。
+function Get-HistorySessionMetadata {
     param([Parameter(Mandatory = $true)][string]$SourceFile)
 
     $stream = [System.IO.FileStream]::new(
@@ -862,7 +862,11 @@ function Get-HistorySessionId {
             }
 
             if ([string]$record.type -eq "session_meta" -and $null -ne $record.payload) {
-                return [string]$record.payload.id
+                $providerProperty = $record.payload.PSObject.Properties["model_provider"]
+                return [PSCustomObject]@{
+                    Id = [string]$record.payload.id
+                    Provider = if ($null -ne $providerProperty) { [string]$providerProperty.Value } else { "" }
+                }
             }
         }
     }
@@ -870,7 +874,14 @@ function Get-HistorySessionId {
         $reader.Dispose()
     }
 
-    return ""
+    return [PSCustomObject]@{ Id = ""; Provider = "" }
+}
+
+# 兼容只需要会话 ID 的导出、恢复调用点。
+function Get-HistorySessionId {
+    param([Parameter(Mandatory = $true)][string]$SourceFile)
+
+    return [string](Get-HistorySessionMetadata -SourceFile $SourceFile).Id
 }
 
 # 生成 GUI 会话选择器需要的轻量目录，标题优先来自 session_index.jsonl。
@@ -895,7 +906,8 @@ function Get-SessionCatalog {
         $directory = Join-Path $DataRoot $directoryName
         if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
         foreach ($file in Get-ChildItem -LiteralPath $directory -Recurse -File -Filter "*.jsonl") {
-            $id = Get-HistorySessionId -SourceFile $file.FullName
+            $metadata = Get-HistorySessionMetadata -SourceFile $file.FullName
+            $id = [string]$metadata.Id
             if ([string]::IsNullOrWhiteSpace($id)) { continue }
             $indexRecord = if ($indexById.ContainsKey($id)) { $indexById[$id] } else { $null }
             $titleProperty = if ($null -ne $indexRecord) { $indexRecord.PSObject.Properties["title"] } else { $null }
@@ -916,6 +928,7 @@ function Get-SessionCatalog {
                 title = $title
                 updatedAt = $updatedAt
                 archived = ($directoryName -eq "archived_sessions")
+                provider = [string]$metadata.Provider
                 path = (Get-RelativePath -BasePath $DataRoot -TargetPath $file.FullName).Replace('\', '/')
             })
         }
@@ -1006,6 +1019,10 @@ public static class CodexHistorySqlite
         try
         {
             sqlite3_busy_timeout(database, 5000);
+            if (!TableExists(database, "threads"))
+            {
+                return 0;
+            }
             Execute(database, "BEGIN IMMEDIATE");
             transactionStarted = true;
 
@@ -1052,6 +1069,74 @@ public static class CodexHistorySqlite
         }
     }
 
+    // 删除指定会话的线程索引及其已知关联记录。
+    public static int DeleteThreads(string databasePath, string[] sessionIds)
+    {
+        IntPtr database;
+        int result = Open(databasePath, out database);
+        if (result != SqliteOk)
+        {
+            throw new InvalidOperationException("Cannot open SQLite database: " + databasePath);
+        }
+
+        bool transactionStarted = false;
+        IntPtr statement = IntPtr.Zero;
+        try
+        {
+            sqlite3_busy_timeout(database, 5000);
+            if (!TableExists(database, "threads"))
+            {
+                return 0;
+            }
+
+            Execute(database, "BEGIN IMMEDIATE");
+            transactionStarted = true;
+            Execute(database, "CREATE TEMP TABLE codex_history_deleted_ids (id TEXT PRIMARY KEY)");
+            result = Prepare(database, "INSERT OR IGNORE INTO temp.codex_history_deleted_ids (id) VALUES (?1)", -1, out statement, IntPtr.Zero);
+            EnsureSuccess(database, result, "prepare deleted session insert");
+            foreach (string sessionId in sessionIds)
+            {
+                EnsureSuccess(database, BindText(statement, 1, sessionId, -1, SqliteTransient), "bind deleted session id");
+                result = sqlite3_step(statement);
+                if (result != SqliteDone)
+                {
+                    throw new InvalidOperationException("SQLite deleted session insert failed: " + GetError(database));
+                }
+                sqlite3_reset(statement);
+                sqlite3_clear_bindings(statement);
+            }
+            sqlite3_finalize(statement);
+            statement = IntPtr.Zero;
+
+            if (TableExists(database, "thread_spawn_edges"))
+            {
+                Execute(database, "DELETE FROM main.thread_spawn_edges WHERE parent_thread_id IN " +
+                    "(SELECT id FROM temp.codex_history_deleted_ids) OR child_thread_id IN " +
+                    "(SELECT id FROM temp.codex_history_deleted_ids)");
+            }
+            if (TableExists(database, "thread_dynamic_tools"))
+            {
+                Execute(database, "DELETE FROM main.thread_dynamic_tools WHERE thread_id IN (SELECT id FROM temp.codex_history_deleted_ids)");
+            }
+            Execute(database, "DELETE FROM main.threads WHERE id IN (SELECT id FROM temp.codex_history_deleted_ids)");
+            int deletedRows = sqlite3_changes(database);
+            Execute(database, "COMMIT");
+            transactionStarted = false;
+            Execute(database, "PRAGMA wal_checkpoint(TRUNCATE)");
+            return deletedRows;
+        }
+        catch
+        {
+            if (statement != IntPtr.Zero) sqlite3_finalize(statement);
+            if (transactionStarted)
+            {
+                try { Execute(database, "ROLLBACK"); } catch { }
+            }
+            throw;
+        }
+        finally { sqlite3_close(database); }
+    }
+
     // 将暂存数据库裁剪为指定会话，避免部分备份泄露其他线程标题和路径。
     public static int FilterThreads(string databasePath, string[] sessionIds)
     {
@@ -1067,6 +1152,10 @@ public static class CodexHistorySqlite
         try
         {
             sqlite3_busy_timeout(database, 5000);
+            if (!TableExists(database, "threads"))
+            {
+                return 0;
+            }
             Execute(database, "BEGIN IMMEDIATE");
             transactionStarted = true;
             Execute(database, "CREATE TEMP TABLE codex_history_selected_ids (id TEXT PRIMARY KEY)");
@@ -1365,7 +1454,8 @@ function Update-ImportedProviderIndexes {
     param(
         [Parameter(Mandatory = $true)][string]$TargetRoot,
         [Parameter(Mandatory = $true)][string]$Provider,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$SessionIds
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$SessionIds,
+        [switch]$Strict
     )
 
     if ($SessionIds.Count -eq 0) {
@@ -1390,11 +1480,147 @@ function Update-ImportedProviderIndexes {
             $updatedRows += [CodexHistorySqlite]::UpdateProviders($databaseFile.FullName, $Provider, $SessionIds)
         }
         catch {
+            if ($Strict) { throw }
             Write-Warning "Could not update provider references in $($databaseFile.FullName): $($_.Exception.Message)"
         }
     }
 
     return $updatedRows
+}
+
+# 为会话管理变更创建包含完整受支持状态的回滚 ZIP。
+function New-ManagementRollbackArchive {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)][ValidateSet("set-provider", "delete")][string]$Action
+    )
+
+    $backupDirectory = Join-Path (Split-Path -Parent $TargetRoot) "codex-history-backups"
+    [System.IO.Directory]::CreateDirectory($backupDirectory) | Out-Null
+    $backupRoot = Split-Path -Parent $TargetRoot
+    Assert-PathWithinRootWithoutReparsePoint -Root $backupRoot -PathValue $backupDirectory -Operation "Backup destination"
+    $backupName = "codex-history-before-{0}-{1}-{2}.zip" -f $Action, [DateTime]::Now.ToString("yyyyMMdd-HHmmss"), [Guid]::NewGuid().ToString("N").Substring(0, 8)
+    $backupPath = Join-Path $backupDirectory $backupName
+    New-HistoryArchive -SourceRoot $TargetRoot -DestinationArchive $backupPath -IncludeAppState $true `
+        -IncludeChatArtifacts $false -AllowOverwrite $false -SelectedSessionIds $null -EmitProgress $false | Out-Null
+    return $backupPath
+}
+
+# 解析所选 ID 对应的全部 transcript，并在任何写入前拒绝不存在的选择。
+function Get-SelectedSessionFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
+    )
+
+    $matches = [System.Collections.Generic.List[object]]::new()
+    $foundIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($directoryName in @("sessions", "archived_sessions")) {
+        $directory = Join-Path $TargetRoot $directoryName
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
+        foreach ($file in Get-ChildItem -LiteralPath $directory -Recurse -File -Filter "*.jsonl") {
+            $metadata = Get-HistorySessionMetadata -SourceFile $file.FullName
+            if ([string]::IsNullOrWhiteSpace([string]$metadata.Id) -or -not $SelectedSessionIds.Contains([string]$metadata.Id)) {
+                continue
+            }
+            Assert-PathWithinRootWithoutReparsePoint -Root $TargetRoot -PathValue $file.FullName -Operation "Session management"
+            $foundIds.Add([string]$metadata.Id) | Out-Null
+            $matches.Add([PSCustomObject]@{ File = $file.FullName; Id = [string]$metadata.Id })
+        }
+    }
+
+    foreach ($selectedId in $SelectedSessionIds) {
+        if (-not $foundIds.Contains($selectedId)) {
+            throw "Selected session was not found in the Codex data folder: $selectedId"
+        }
+    }
+    return @($matches)
+}
+
+# 将指定会话的 transcript 与桌面线程索引更新为同一个 provider。
+function Set-SelectedSessionProviders {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.HashSet[string]]$SelectedSessionIds,
+        [Parameter(Mandatory = $true)][string]$Provider
+    )
+
+    $sessionFiles = @(Get-SelectedSessionFiles -TargetRoot $TargetRoot -SelectedSessionIds $SelectedSessionIds)
+    $changedFiles = 0
+    foreach ($session in $sessionFiles) {
+        $rewrite = New-ProviderRewrittenSessionFile -SourceFile $session.File -DestinationFile $session.File -Provider $Provider
+        if (-not $rewrite.MetadataFound) {
+            throw "Selected session does not contain model_provider metadata: $($session.Id)"
+        }
+        if ($rewrite.Changed) { $changedFiles++ }
+    }
+    $updatedRows = Update-ImportedProviderIndexes -TargetRoot $TargetRoot -Provider $Provider `
+        -SessionIds @($SelectedSessionIds) -Strict
+    return [PSCustomObject]@{ FilesChanged = $changedFiles; IndexRowsUpdated = $updatedRows }
+}
+
+# 从 session_index.jsonl 原子移除所选会话的标题记录。
+function Remove-SelectedSessionIndexEntries {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
+    )
+
+    $indexPath = Join-Path $TargetRoot "session_index.jsonl"
+    if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) { return 0 }
+    Assert-PathWithinRootWithoutReparsePoint -Root $TargetRoot -PathValue $indexPath -Operation "Session index update"
+    $remaining = [System.Collections.Generic.List[string]]::new()
+    $removed = 0
+    foreach ($line in [System.IO.File]::ReadAllLines($indexPath, [System.Text.Encoding]::UTF8)) {
+        try { $id = [string](($line | ConvertFrom-Json).id) } catch { $id = "" }
+        if (-not [string]::IsNullOrWhiteSpace($id) -and $SelectedSessionIds.Contains($id)) {
+            $removed++
+        }
+        else {
+            $remaining.Add($line)
+        }
+    }
+    Write-LinesAtomically -Destination $indexPath -Lines @($remaining)
+    return $removed
+}
+
+# 从所有兼容的本机状态库删除所选线程及已知关联记录。
+function Remove-SelectedSessionThreadIndexes {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
+    )
+
+    Initialize-SqliteProviderUpdater
+    $deletedRows = 0
+    foreach ($directory in @($TargetRoot, (Join-Path $TargetRoot "sqlite"))) {
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
+        foreach ($databaseFile in Get-ChildItem -LiteralPath $directory -File -Filter "state_*.sqlite" -ErrorAction SilentlyContinue) {
+            Assert-PathWithinRootWithoutReparsePoint -Root $TargetRoot -PathValue $databaseFile.FullName -Operation "SQLite session delete"
+            $deletedRows += [CodexHistorySqlite]::DeleteThreads($databaseFile.FullName, @($SelectedSessionIds))
+        }
+    }
+    return $deletedRows
+}
+
+# 删除所选 transcript，并同步标题索引和 SQLite 线程索引。
+function Remove-SelectedSessions {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
+    )
+
+    $sessionFiles = @(Get-SelectedSessionFiles -TargetRoot $TargetRoot -SelectedSessionIds $SelectedSessionIds)
+    $indexEntriesRemoved = Remove-SelectedSessionIndexEntries -TargetRoot $TargetRoot -SelectedSessionIds $SelectedSessionIds
+    $threadRowsRemoved = Remove-SelectedSessionThreadIndexes -TargetRoot $TargetRoot -SelectedSessionIds $SelectedSessionIds
+    foreach ($session in $sessionFiles) {
+        [System.IO.File]::Delete([string]$session.File)
+    }
+    return [PSCustomObject]@{
+        SessionFilesRemoved = $sessionFiles.Count
+        IndexEntriesRemoved = $indexEntriesRemoved
+        ThreadRowsRemoved = $threadRowsRemoved
+    }
 }
 
 # 将来源 state 数据库中的缺失线程合并到目标，并绑定到目标电脑的 transcript 路径。
@@ -1830,6 +2056,51 @@ try {
             if ($result.ConflictingFilesKeptAtDestination -gt 0) {
                 Write-Warning "$($result.ConflictingFilesKeptAtDestination) conflicting session files were kept at the destination. The source versions remain in the migration ZIP."
             }
+        }
+        "SetProvider" {
+            Write-ProgressEvent -Percent 0 -Stage "PreparingProviderUpdate"
+            Assert-CodexStopped -AllowRunning:$AllowRunningCodex
+            if ([string]::IsNullOrWhiteSpace($SessionSelectionFile) -or $null -eq $selectedSessionIds) {
+                throw "Session selection is required for provider updates."
+            }
+            if ([string]::IsNullOrWhiteSpace($TargetModelProvider)) {
+                throw "SetProvider mode requires -TargetModelProvider."
+            }
+            if (-not (Test-Path -LiteralPath $resolvedCodexHome -PathType Container)) {
+                throw "Codex home does not exist: $resolvedCodexHome"
+            }
+
+            $resolvedProvider = Resolve-TargetModelProvider -TargetRoot $resolvedCodexHome -RequestedProvider $TargetModelProvider
+            Get-SelectedSessionFiles -TargetRoot $resolvedCodexHome -SelectedSessionIds $selectedSessionIds | Out-Null
+            Write-ProgressEvent -Percent 20 -Stage "CreatingRollbackBackup"
+            $backupPath = New-ManagementRollbackArchive -TargetRoot $resolvedCodexHome -Action "set-provider"
+            Write-Host ("backup created`tarchive={0}" -f $backupPath)
+            Write-ProgressEvent -Percent 48 -Stage "UpdatingProviders"
+            $result = Set-SelectedSessionProviders -TargetRoot $resolvedCodexHome `
+                -SelectedSessionIds $selectedSessionIds -Provider $resolvedProvider
+            Write-ProgressEvent -Percent 100 -Stage "Complete"
+            Write-Host ("provider update complete`tcodexHome={0}`tsessions={1}`tprovider={2}`tfiles={3}`tproviderIndexRows={4}" -f `
+                $resolvedCodexHome, $selectedSessionIds.Count, $resolvedProvider, $result.FilesChanged, $result.IndexRowsUpdated)
+        }
+        "Delete" {
+            Write-ProgressEvent -Percent 0 -Stage "PreparingDelete"
+            Assert-CodexStopped -AllowRunning:$AllowRunningCodex
+            if ([string]::IsNullOrWhiteSpace($SessionSelectionFile) -or $null -eq $selectedSessionIds) {
+                throw "Session selection is required for deletion."
+            }
+            if (-not (Test-Path -LiteralPath $resolvedCodexHome -PathType Container)) {
+                throw "Codex home does not exist: $resolvedCodexHome"
+            }
+
+            Get-SelectedSessionFiles -TargetRoot $resolvedCodexHome -SelectedSessionIds $selectedSessionIds | Out-Null
+            Write-ProgressEvent -Percent 20 -Stage "CreatingRollbackBackup"
+            $backupPath = New-ManagementRollbackArchive -TargetRoot $resolvedCodexHome -Action "delete"
+            Write-Host ("backup created`tarchive={0}" -f $backupPath)
+            Write-ProgressEvent -Percent 48 -Stage "RemovingSessions"
+            $result = Remove-SelectedSessions -TargetRoot $resolvedCodexHome -SelectedSessionIds $selectedSessionIds
+            Write-ProgressEvent -Percent 100 -Stage "Complete"
+            Write-Host ("delete complete`tcodexHome={0}`tsessions={1}`tfiles={2}`tindexRows={3}`tthreadRows={4}" -f `
+                $resolvedCodexHome, $selectedSessionIds.Count, $result.SessionFilesRemoved, $result.IndexEntriesRemoved, $result.ThreadRowsRemoved)
         }
         "Inspect" {
             if ([string]::IsNullOrWhiteSpace($ArchivePath)) {

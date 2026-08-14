@@ -1,6 +1,6 @@
-# Codex History Migration
+# Codex Session Manager
 
-在 Windows 电脑之间备份和恢复 Codex 本地聊天历史。提供中英文图形界面与命令行两种入口，仅依赖 Windows PowerShell 5.1，不需要安装第三方模块。
+在 Windows 上备份、恢复和管理 Codex 本地聊天历史。提供中英文图形界面与命令行两种入口，仅依赖 Windows PowerShell 5.1，不需要安装第三方模块。
 
 这是社区维护的非官方工具，不隶属于 OpenAI。Codex 本地数据格式可能随版本变化；GUI 会在恢复前自动校验 ZIP，命令行仍提供独立 `Inspect` 模式。请保留工具生成的回滚包。
 
@@ -22,8 +22,11 @@ cd codex-history-migration
 - `Export`：将活动会话、归档会话、标题索引和桌面端状态打包为 `.zip`。
 - `Inspect`：在不修改本机数据的情况下校验归档格式、文件大小和逐文件 SHA-256。
 - `Import`：校验后恢复历史；目标端已有历史时合并会话文件、标题索引和兼容的桌面端线程索引，并先自动创建回滚包。
+- `SetProvider`：只修改明确选中的本机会话，同时更新 transcript 的 `model_provider` 与兼容的 SQLite 线程索引。
+- `Delete`：只移除明确选中的本机会话，同时清理 transcript、标题索引、线程行、动态工具和派生关系。
 - 导出和恢复均可查看、搜索并选择会话；部分操作会同步过滤 transcript、标题索引和桌面端线程元数据。
 - GUI 支持中文/英文即时切换，并在导出和恢复过程中显示阶段和确定百分比。
+- GUI 使用“导出 / 恢复 / 管理”三任务结构；会话列表显示当前 Provider，管理操作不会默认选择全部会话。
 - 恢复时可把迁入会话的 `model_provider` 重映射到新电脑当前 provider，并同步桌面端线程索引。
 - 默认排除 `auth.json`、`.sandbox-secrets/`、OAuth 锁和其他认证状态。
 - 默认拒绝在 Codex、Codex app server 或 ChatGPT 桌面端运行时导出或恢复，避免复制不一致的 SQLite 状态。
@@ -49,6 +52,8 @@ Start-CodexHistoryMigration.cmd
 在新电脑切换到“恢复”，选择 ZIP；如需部分恢复，点击“选择会话”。确认目标 Codex 数据目录后点击“恢复会话”。工具会在写入前自动完成完整校验。“适配为本机 Provider”默认启用；目标 Provider 留空时自动读取新电脑的用户级 `config.toml`，也可以手动填写 provider ID。
 
 “高级选项”默认折叠。其中“使用备份覆盖本机桌面状态”会用 ZIP 中的桌面状态数据库替换本机对应文件，可能改变本机界面状态和索引；它默认关闭，且不能与部分会话恢复同时启用。技术输出位于折叠的“详细信息”中，失败时自动展开。
+
+管理本机会话时切换到“管理”，先明确选择一个或多个会话，再选择“设置 Provider”或“删除会话”。两种操作都会先在 `.codex` 同级的 `codex-history-backups/` 创建完整回滚 ZIP；删除操作使用危险色按钮和二次确认。工具不会删除无法可靠归属到单个会话的生成图片或可视化。
 
 ### 命令行
 
@@ -76,6 +81,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
   -ArchivePath "E:\codex-history.zip" `
   -RewriteModelProvider
 ```
+
+批量设置指定会话的 Provider：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 `
+  -Mode SetProvider `
+  -SessionSelectionFile "E:\selected-session-ids.txt" `
+  -TargetModelProvider "custom"
+```
+
+删除指定会话历史：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 `
+  -Mode Delete `
+  -SessionSelectionFile "E:\selected-session-ids.txt"
+```
+
+`SetProvider` 和 `Delete` 必须显式提供 `-SessionSelectionFile`，且执行前要求 Codex / ChatGPT 已关闭。两者都会先创建完整回滚 ZIP。
 
 脚本默认使用 `$env:CODEX_HOME`；未设置时使用当前 Windows 用户目录下的 `.codex`。可以通过 `-CodexHome` 指定其他目录：
 
@@ -175,7 +199,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 
 ## 参数
 
-- `-Mode`：必填，`Export`、`Import`、`Inspect` 或 `List`。`List` 供会话选择器和自动化枚举使用。
+- `-Mode`：必填，`Export`、`Import`、`Inspect`、`List`、`SetProvider` 或 `Delete`。`List` 供会话选择器和自动化枚举使用。
 - `-ArchivePath`：ZIP 路径。`Import` 和 `Inspect` 必填；`Export` 不指定时写入当前目录。
 - `-CodexHome`：可选，覆盖默认 Codex 数据目录。
 - `-HistoryOnly`：导出时不包含桌面端状态数据库。
@@ -183,7 +207,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 - `-RestoreAppState`：导入到已有历史的目标端时也替换桌面端状态；执行前仍会自动备份。
 - `-RewriteModelProvider`：把迁入历史指向新电脑的 provider；GUI 恢复模式默认启用。
 - `-TargetModelProvider`：显式指定目标 provider ID；省略时从目标 `config.toml` 自动解析。
-- `-SessionSelectionFile`：UTF-8 文本，每行一个会话 ID；用于部分导出或部分恢复。
+- `-SessionSelectionFile`：UTF-8 文本，每行一个会话 ID；用于部分导出、部分恢复、Provider 更新或删除。管理操作中为必填。
 - `-AllowRunningCodex`：跳过进程检查。只适合隔离测试；真实迁移不建议使用。
 - `-Force`：导出时允许覆盖已存在的 ZIP，不影响导入冲突策略。
 
@@ -192,7 +216,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 运行 PowerShell 语法检查和回归测试：
 
 ```powershell
-$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1', 'tests\CodexHistoryMigration.Selection.Tests.ps1'
+$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1', 'tests\CodexHistoryMigration.Selection.Tests.ps1', 'tests\CodexHistoryMigration.Management.Tests.ps1'
 foreach ($file in $files) {
     $tokens = $null
     $errors = $null
@@ -201,6 +225,7 @@ foreach ($file in $files) {
 }
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Regression.Tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Selection.Tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Management.Tests.ps1
 ```
 
 ## 边界
@@ -208,6 +233,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigratio
 - 工具迁移的是 Codex 本地历史，不会复制 Git 仓库、项目文件、登录状态、MCP 凭据或 `config.toml`。
 - provider 重映射只解决本地 provider 引用，不会迁移 API Key、登录授权、账号权限、模型可用性或服务端任务所有权；新电脑必须已经能正常使用目标 provider。
 - 聊天记录中的旧工作目录仍然是原电脑路径。项目需要另行克隆或复制，并在新电脑重新关联目录。
+- 删除会话只清理能按会话 ID 可靠定位的 transcript 与索引；生成图片、可视化和其他共享产物不会被自动删除。
 - 官方 OpenAI 文档说明保存的 Codex 聊天保留 transcript 和记录的工作目录，并可以通过 `/resume` 或 `codex resume` 继续；官方导入功能目前面向 Claude Code、Claude Cowork 和 Cursor，不提供 Codex 到 Codex 的本地历史迁移，因此本工具采用本地归档方式。
 
 参考：

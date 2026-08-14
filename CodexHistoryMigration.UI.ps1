@@ -10,6 +10,7 @@ Add-Type -AssemblyName System.Windows.Forms
 
 $script:CoreScriptPath = Join-Path $PSScriptRoot "CodexHistoryMigration.ps1"
 $script:SelectedMode = "Export"
+$script:SelectedManagementAction = "SetProvider"
 $script:Language = "zh"
 $script:AdvancedExpanded = $false
 $script:DetailsExpanded = $false
@@ -25,22 +26,29 @@ $script:CurrentStatusKey = "readyExport"
 $script:ModeValues = @{
     Export = @{ Source = ""; Destination = "" }
     Import = @{ Source = ""; Destination = "" }
+    Manage = @{ Source = ""; Destination = "" }
 }
 
 $script:Strings = @{
     zh = @{
-        appTitle = "Codex 历史迁移"
+        appTitle = "Codex 会话管理器"
         export = "导出"
         import = "恢复"
+        manage = "管理"
         chinese = "中"
         english = "EN"
         exportSource = "Codex 数据目录"
         importSource = "备份 ZIP"
         exportDestination = "备份 ZIP 保存位置"
         importDestination = "Codex 数据目录"
+        manageSource = "Codex 数据目录"
+        managementAction = "管理操作"
+        setProvider = "设置 Provider"
+        deleteSessions = "删除会话"
         sessions = "会话范围"
         selectedSessions = "已选择 {0} / {1} 个会话"
         sessionsNotLoaded = "全部会话（可按需选择）"
+        manageSessionsNotSelected = "尚未选择会话（管理操作必须明确选择）"
         chooseSessions = "选择会话"
         advanced = "高级选项"
         details = "详细信息"
@@ -51,9 +59,12 @@ $script:Strings = @{
         targetProvider = "目标 Provider"
         createBackup = "创建备份"
         restoreSessions = "恢复会话"
+        updateProvider = "更新 Provider"
+        removeSessions = "删除会话"
         safety = "操作前请彻底退出 Codex / ChatGPT"
         readyExport = "准备导出"
         readyImport = "准备恢复"
+        readyManage = "请选择会话并设置管理操作"
         loadingSessions = "正在读取会话..."
         starting = "正在启动..."
         completed = "操作完成"
@@ -69,6 +80,10 @@ $script:Strings = @{
         CreatingRollbackBackup = "正在创建回滚备份"
         RestoringFiles = "正在恢复会话"
         MergingIndexes = "正在更新会话索引"
+        PreparingProviderUpdate = "正在准备 Provider 更新"
+        UpdatingProviders = "正在更新 Provider"
+        PreparingDelete = "正在准备删除"
+        RemovingSessions = "正在删除会话"
         Complete = "操作完成"
         browseCodex = "选择 Codex 数据目录"
         browseSaveZip = "保存 Codex 历史备份"
@@ -84,11 +99,15 @@ $script:Strings = @{
         overwriteTitle = "确认覆盖"
         overwriteZip = "目标 ZIP 已存在，是否覆盖？"
         confirmRestore = "确认恢复"
+        confirmProviderUpdate = "确认更新 Provider"
+        confirmDelete = "确认删除会话"
         restoreMerge = "将恢复 {0}。本机已有会话默认保留。{1}"
         restoreOverwrite = "将恢复 {0}，并使用备份覆盖本机桌面状态。{1}`r`n工具会先创建回滚 ZIP。"
         providerAuto = "迁入会话将自动适配本机 Provider。"
         providerNamed = "迁入会话将改为 Provider '{0}'。"
         providerKeep = "迁入会话将保留原 Provider。"
+        providerUpdateMessage = "将把选中的 {0} 个会话设置为 Provider '{1}'。`r`n工具会先创建完整回滚 ZIP。"
+        deleteMessage = "将从本机删除选中的 {0} 个会话、标题和桌面线程索引。`r`n工具会先创建完整回滚 ZIP，但删除操作本身不可直接撤销。"
         continueQuestion = "是否继续？"
         operationRunning = "操作仍在进行，完成后才能关闭窗口。"
         sessionPickerTitle = "选择会话"
@@ -99,12 +118,15 @@ $script:Strings = @{
         titleColumn = "标题"
         updatedColumn = "更新时间"
         typeColumn = "类型"
+        providerColumn = "Provider"
         activeType = "活动"
         archivedType = "归档"
         confirm = "确定"
         cancel = "取消"
         noSessions = "没有找到可迁移的会话。"
         selectAtLeastOne = "请至少选择一个会话。"
+        chooseManageSessions = "请先明确选择要管理的会话。"
+        enterProvider = "请输入目标 Provider。"
         loadSessionsFailed = "读取会话失败"
         partialOverwriteTip = "选择部分会话时不能覆盖完整的本机桌面状态。"
         stateTip = "用备份中的桌面状态数据库替换本机对应文件，可能改变本机界面状态和会话索引。"
@@ -115,18 +137,24 @@ $script:Strings = @{
         selectedPhrase = "选中的 {0} 个会话"
     }
     en = @{
-        appTitle = "Codex History Migrator"
+        appTitle = "Codex Session Manager"
         export = "Export"
         import = "Restore"
+        manage = "Manage"
         chinese = "中"
         english = "EN"
         exportSource = "Codex data folder"
         importSource = "Backup ZIP"
         exportDestination = "Backup ZIP destination"
         importDestination = "Codex data folder"
+        manageSource = "Codex data folder"
+        managementAction = "Management action"
+        setProvider = "Set Provider"
+        deleteSessions = "Delete sessions"
         sessions = "Sessions"
         selectedSessions = "{0} of {1} sessions selected"
         sessionsNotLoaded = "All sessions (select if needed)"
+        manageSessionsNotSelected = "No sessions selected (management requires an explicit selection)"
         chooseSessions = "Choose sessions"
         advanced = "Advanced options"
         details = "Details"
@@ -137,9 +165,12 @@ $script:Strings = @{
         targetProvider = "Target Provider"
         createBackup = "Create backup"
         restoreSessions = "Restore sessions"
+        updateProvider = "Update Provider"
+        removeSessions = "Delete sessions"
         safety = "Close Codex / ChatGPT completely before running"
         readyExport = "Ready to export"
         readyImport = "Ready to restore"
+        readyManage = "Choose sessions and a management action"
         loadingSessions = "Loading sessions..."
         starting = "Starting..."
         completed = "Completed"
@@ -155,6 +186,10 @@ $script:Strings = @{
         CreatingRollbackBackup = "Creating rollback backup"
         RestoringFiles = "Restoring sessions"
         MergingIndexes = "Updating session indexes"
+        PreparingProviderUpdate = "Preparing Provider update"
+        UpdatingProviders = "Updating Provider"
+        PreparingDelete = "Preparing deletion"
+        RemovingSessions = "Deleting sessions"
         Complete = "Completed"
         browseCodex = "Choose Codex data folder"
         browseSaveZip = "Save Codex history backup"
@@ -170,11 +205,15 @@ $script:Strings = @{
         overwriteTitle = "Confirm overwrite"
         overwriteZip = "The destination ZIP already exists. Overwrite it?"
         confirmRestore = "Confirm restore"
+        confirmProviderUpdate = "Confirm Provider update"
+        confirmDelete = "Confirm session deletion"
         restoreMerge = "Restore {0}. Existing local sessions will be kept. {1}"
         restoreOverwrite = "Restore {0} and overwrite local desktop state with the backup. {1}`r`nA rollback ZIP will be created first."
         providerAuto = "Imported sessions will use this computer's configured Provider."
         providerNamed = "Imported sessions will use Provider '{0}'."
         providerKeep = "Imported sessions will keep their original Provider."
+        providerUpdateMessage = "Set the selected {0} sessions to Provider '{1}'.`r`nA complete rollback ZIP will be created first."
+        deleteMessage = "Delete the selected {0} sessions, titles, and desktop thread indexes from this computer.`r`nA complete rollback ZIP will be created first, but the deletion itself cannot be directly undone."
         continueQuestion = "Continue?"
         operationRunning = "The operation is still running. Wait for it to finish before closing."
         sessionPickerTitle = "Choose sessions"
@@ -185,12 +224,15 @@ $script:Strings = @{
         titleColumn = "Title"
         updatedColumn = "Updated"
         typeColumn = "Type"
+        providerColumn = "Provider"
         activeType = "Active"
         archivedType = "Archived"
         confirm = "OK"
         cancel = "Cancel"
         noSessions = "No migratable sessions were found."
         selectAtLeastOne = "Select at least one session."
+        chooseManageSessions = "Choose the sessions to manage first."
+        enterProvider = "Enter a target Provider."
         loadSessionsFailed = "Could not load sessions"
         partialOverwriteTip = "A partial session restore cannot overwrite the complete local desktop state."
         stateTip = "Replaces matching local desktop-state files with the backup and may change UI state and session indexes."
@@ -287,7 +329,7 @@ function Write-UiLog {
 
 function Update-SessionSummary {
     if ($script:AvailableSessions.Count -eq 0) {
-        $script:SessionSummaryLabel.Text = T "sessionsNotLoaded"
+        $script:SessionSummaryLabel.Text = T $(if ($script:SelectedMode -eq "Manage") { "manageSessionsNotSelected" } else { "sessionsNotLoaded" })
     }
     elseif ($null -eq $script:SelectedSessionIds) {
         $script:SessionSummaryLabel.Text = Format-T "selectedSessions" @($script:AvailableSessions.Count, $script:AvailableSessions.Count)
@@ -315,11 +357,22 @@ function Save-ModeValues {
 }
 
 function Update-Layout {
-    $advancedHeight = if ($script:AdvancedExpanded) { 92 } else { 0 }
-    $script:AdvancedPanel.Visible = $script:AdvancedExpanded
+    $isManage = $script:SelectedMode -eq "Manage"
+    $advancedHeight = if (-not $isManage -and $script:AdvancedExpanded) { 92 } else { 0 }
+    $script:AdvancedButton.Visible = -not $isManage
+    $script:AdvancedPanel.Visible = -not $isManage -and $script:AdvancedExpanded
     $script:AdvancedPanel.Location = [System.Drawing.Point]::new(28, 372)
     $script:AdvancedPanel.Size = [System.Drawing.Size]::new(744, $advancedHeight)
-    $actionY = 388 + $advancedHeight
+    $script:ManagementActionLabel.Visible = $isManage
+    $script:SetProviderActionButton.Visible = $isManage
+    $script:DeleteActionButton.Visible = $isManage
+    $script:DestinationLabel.Location = [System.Drawing.Point]::new(28, $(if ($isManage) { 344 } else { 274 }))
+    $script:DestinationTextBox.Location = [System.Drawing.Point]::new(28, $(if ($isManage) { 370 } else { 300 }))
+    $script:DestinationBrowseButton.Location = [System.Drawing.Point]::new(718, $(if ($isManage) { 368 } else { 298 }))
+    $script:DestinationLabel.Visible = -not $isManage -or $script:SelectedManagementAction -eq "SetProvider"
+    $script:DestinationTextBox.Visible = -not $isManage -or $script:SelectedManagementAction -eq "SetProvider"
+    $script:DestinationBrowseButton.Visible = -not $isManage
+    $actionY = if ($isManage) { 420 } else { 388 + $advancedHeight }
     $script:SafetyLabel.Location = [System.Drawing.Point]::new(28, ($actionY + 2))
     $script:RunButton.Location = [System.Drawing.Point]::new(606, $actionY)
     $script:StatusLabel.Location = [System.Drawing.Point]::new(28, ($actionY + 54))
@@ -340,10 +393,14 @@ function Update-Language {
     $script:TitleLabel.Text = T "appTitle"
     $script:ExportModeButton.Text = T "export"
     $script:ImportModeButton.Text = T "import"
+    $script:ManageModeButton.Text = T "manage"
     $script:ChineseButton.Text = T "chinese"
     $script:EnglishButton.Text = T "english"
-    $script:SourceLabel.Text = T $(if ($script:SelectedMode -eq "Export") { "exportSource" } else { "importSource" })
-    $script:DestinationLabel.Text = T $(if ($script:SelectedMode -eq "Export") { "exportDestination" } else { "importDestination" })
+    $script:SourceLabel.Text = T $(switch ($script:SelectedMode) { "Export" { "exportSource" }; "Import" { "importSource" }; default { "manageSource" } })
+    $script:DestinationLabel.Text = T $(switch ($script:SelectedMode) { "Export" { "exportDestination" }; "Import" { "importDestination" }; default { "targetProvider" } })
+    $script:ManagementActionLabel.Text = T "managementAction"
+    $script:SetProviderActionButton.Text = T "setProvider"
+    $script:DeleteActionButton.Text = T "deleteSessions"
     $script:SessionsLabel.Text = T "sessions"
     $script:ChooseSessionsButton.Text = T "chooseSessions"
     $script:HistoryOnlyCheckBox.Text = T "historyOnly"
@@ -351,12 +408,21 @@ function Update-Language {
     $script:RestoreAppStateCheckBox.Text = T "overwriteState"
     $script:RewriteProviderCheckBox.Text = T "rewriteProvider"
     $script:TargetProviderLabel.Text = T "targetProvider"
-    $script:RunButton.Text = T $(if ($script:SelectedMode -eq "Export") { "createBackup" } else { "restoreSessions" })
+    $runTextKey = switch ($script:SelectedMode) {
+        "Export" { "createBackup" }
+        "Import" { "restoreSessions" }
+        default { if ($script:SelectedManagementAction -eq "Delete") { "removeSessions" } else { "updateProvider" } }
+    }
+    $script:RunButton.Text = T $runTextKey
+    $script:RunButton.BackColor = if ($script:SelectedMode -eq "Manage" -and $script:SelectedManagementAction -eq "Delete") {
+        [System.Drawing.Color]::FromArgb(185, 46, 46)
+    }
+    else { [System.Drawing.Color]::FromArgb(20, 103, 184) }
     $script:SafetyLabel.Text = T "safety"
     if ($null -eq $script:ActiveProcess) { $script:StatusLabel.Text = T $script:CurrentStatusKey }
     Set-SegmentState $script:ChineseButton ($script:Language -eq "zh")
     Set-SegmentState $script:EnglishButton ($script:Language -eq "en")
-    $script:ToolTip.SetToolTip($script:SourceBrowseButton, (T $(if ($script:SelectedMode -eq "Export") { "browseCodex" } else { "browseOpenZip" })))
+    $script:ToolTip.SetToolTip($script:SourceBrowseButton, (T $(if ($script:SelectedMode -eq "Import") { "browseOpenZip" } else { "browseCodex" })))
     $script:ToolTip.SetToolTip($script:DestinationBrowseButton, (T $(if ($script:SelectedMode -eq "Export") { "browseSaveZip" } else { "browseCodex" })))
     $script:ToolTip.SetToolTip($script:HistoryOnlyCheckBox, (T "historyOnlyTip"))
     $script:ToolTip.SetToolTip($script:IncludeArtifactsCheckBox, (T "partialArtifactsTip"))
@@ -367,23 +433,34 @@ function Update-Language {
 }
 
 function Set-SelectedMode {
-    param([ValidateSet("Export", "Import")][string]$Mode)
+    param([ValidateSet("Export", "Import", "Manage")][string]$Mode)
     if ($script:SelectedMode -ne $Mode) { Save-ModeValues }
     $script:SelectedMode = $Mode
     $script:SuppressSelectionReset = $true
     $script:SourceTextBox.Text = [string]$script:ModeValues[$Mode].Source
-    $script:DestinationTextBox.Text = [string]$script:ModeValues[$Mode].Destination
+    if ($Mode -eq "Manage") { $script:DestinationTextBox.Clear() }
+    else { $script:DestinationTextBox.Text = [string]$script:ModeValues[$Mode].Destination }
     $script:SuppressSelectionReset = $false
     $script:AvailableSessions = @()
     $script:SelectedSessionIds = $null
     $script:ArchiveIsPartial = $false
-    $script:CurrentStatusKey = if ($Mode -eq "Export") { "readyExport" } else { "readyImport" }
+    $script:CurrentStatusKey = switch ($Mode) { "Export" { "readyExport" }; "Import" { "readyImport" }; default { "readyManage" } }
     $script:ExportOptionsPanel.Visible = $Mode -eq "Export"
     $script:ImportOptionsPanel.Visible = $Mode -eq "Import"
     Set-SegmentState $script:ExportModeButton ($Mode -eq "Export")
     Set-SegmentState $script:ImportModeButton ($Mode -eq "Import")
+    Set-SegmentState $script:ManageModeButton ($Mode -eq "Manage")
     $script:ProgressBar.Value = 0
     $script:PercentLabel.Text = "0%"
+    Update-Language
+}
+
+function Set-ManagementAction {
+    param([ValidateSet("SetProvider", "Delete")][string]$Action)
+
+    $script:SelectedManagementAction = $Action
+    Set-SegmentState $script:SetProviderActionButton ($Action -eq "SetProvider")
+    Set-SegmentState $script:DeleteActionButton ($Action -eq "Delete")
     Update-Language
 }
 
@@ -395,10 +472,10 @@ function Show-Message {
 function Invoke-SessionList {
     $source = $script:SourceTextBox.Text.Trim()
     if ([string]::IsNullOrWhiteSpace($source)) {
-        Show-Message (T $(if ($script:SelectedMode -eq "Export") { "chooseCodex" } else { "chooseZip" })) "missingPath"
+        Show-Message (T $(if ($script:SelectedMode -eq "Import") { "chooseZip" } else { "chooseCodex" })) "missingPath"
         return $null
     }
-    if ($script:SelectedMode -eq "Export" -and -not (Test-Path -LiteralPath $source -PathType Container)) {
+    if ($script:SelectedMode -ne "Import" -and -not (Test-Path -LiteralPath $source -PathType Container)) {
         Show-Message (T "codexMissing") "invalidPath"
         return $null
     }
@@ -412,7 +489,7 @@ function Invoke-SessionList {
     [System.Windows.Forms.Application]::DoEvents()
     try {
         $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script:CoreScriptPath, "-Mode", "List")
-        if ($script:SelectedMode -eq "Export") { $arguments += @("-CodexHome", $source) }
+        if ($script:SelectedMode -ne "Import") { $arguments += @("-CodexHome", $source) }
         else { $arguments += @("-ArchivePath", $source) }
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
         $startInfo.FileName = "powershell.exe"
@@ -459,31 +536,35 @@ function Show-SessionPicker {
     $dialog = [System.Windows.Forms.Form]::new()
     $dialog.Text = T "sessionPickerTitle"
     $dialog.StartPosition = "CenterParent"
-    $dialog.ClientSize = [System.Drawing.Size]::new(720, 500)
-    $dialog.MinimumSize = [System.Drawing.Size]::new(680, 480)
+    $dialog.ClientSize = [System.Drawing.Size]::new(820, 500)
+    $dialog.MinimumSize = [System.Drawing.Size]::new(780, 480)
     $dialog.Font = $script:MainForm.Font
     $dialog.BackColor = [System.Drawing.Color]::FromArgb(248, 249, 251)
 
     $searchLabel = New-UiLabel (T "search") 20 16 80
     $searchBox = [System.Windows.Forms.TextBox]::new()
     $searchBox.Location = [System.Drawing.Point]::new(20, 42)
-    $searchBox.Size = [System.Drawing.Size]::new(680, 28)
+    $searchBox.Size = [System.Drawing.Size]::new(780, 28)
     $searchBox.Anchor = "Top, Left, Right"
     $list = [System.Windows.Forms.ListView]::new()
     $list.Location = [System.Drawing.Point]::new(20, 82)
-    $list.Size = [System.Drawing.Size]::new(680, 342)
+    $list.Size = [System.Drawing.Size]::new(780, 342)
     $list.Anchor = "Top, Bottom, Left, Right"
     $list.View = "Details"
     $list.CheckBoxes = $true
     $list.FullRowSelect = $true
     $list.HideSelection = $false
-    $list.Columns.Add((T "titleColumn"), 390) | Out-Null
-    $list.Columns.Add((T "updatedColumn"), 170) | Out-Null
+    $list.Columns.Add((T "titleColumn"), 340) | Out-Null
+    $list.Columns.Add((T "updatedColumn"), 155) | Out-Null
+    $list.Columns.Add((T "providerColumn"), 165) | Out-Null
     $list.Columns.Add((T "typeColumn"), 90) | Out-Null
 
     $selectedMap = @{}
     foreach ($session in $sessions) {
-        $selectedMap[[string]$session.id] = ($null -eq $script:SelectedSessionIds -or $script:SelectedSessionIds.Contains([string]$session.id))
+        $selectedMap[[string]$session.id] = if ($null -eq $script:SelectedSessionIds) {
+            $script:SelectedMode -ne "Manage"
+        }
+        else { $script:SelectedSessionIds.Contains([string]$session.id) }
     }
 
     $countLabel = New-UiLabel "" 20 438 230
@@ -501,12 +582,12 @@ function Show-SessionPicker {
     $cancelButton = [System.Windows.Forms.Button]::new()
     $cancelButton.Text = T "cancel"
     $cancelButton.DialogResult = "Cancel"
-    $cancelButton.Location = [System.Drawing.Point]::new(506, 434)
+    $cancelButton.Location = [System.Drawing.Point]::new(606, 434)
     $cancelButton.Size = [System.Drawing.Size]::new(92, 32)
     $cancelButton.Anchor = "Bottom, Right"
     $okButton = [System.Windows.Forms.Button]::new()
     $okButton.Text = T "confirm"
-    $okButton.Location = [System.Drawing.Point]::new(608, 434)
+    $okButton.Location = [System.Drawing.Point]::new(708, 434)
     $okButton.Size = [System.Drawing.Size]::new(92, 32)
     $okButton.Anchor = "Bottom, Right"
     $okButton.BackColor = [System.Drawing.Color]::FromArgb(20, 103, 184)
@@ -523,13 +604,16 @@ function Show-SessionPicker {
         $list.BeginUpdate()
         $list.Items.Clear()
         foreach ($session in $sessions) {
+            $provider = if ($null -ne $session.PSObject.Properties["provider"]) { [string]$session.provider } else { "" }
             if (-not [string]::IsNullOrWhiteSpace($filter) -and
-                ([string]$session.title).IndexOf($filter, [System.StringComparison]::CurrentCultureIgnoreCase) -lt 0) { continue }
+                ([string]$session.title).IndexOf($filter, [System.StringComparison]::CurrentCultureIgnoreCase) -lt 0 -and
+                $provider.IndexOf($filter, [System.StringComparison]::CurrentCultureIgnoreCase) -lt 0) { continue }
             $item = [System.Windows.Forms.ListViewItem]::new([string]$session.title)
             $item.Tag = [string]$session.id
             try { $updated = ([DateTime]::Parse([string]$session.updatedAt)).ToLocalTime().ToString("yyyy-MM-dd HH:mm") }
             catch { $updated = [string]$session.updatedAt }
             $item.SubItems.Add($updated) | Out-Null
+            $item.SubItems.Add($provider) | Out-Null
             $item.SubItems.Add($(if ([bool]$session.archived) { T "archivedType" } else { T "activeType" })) | Out-Null
             $item.Checked = [bool]$selectedMap[[string]$session.id]
             $list.Items.Add($item) | Out-Null
@@ -562,7 +646,7 @@ function Show-SessionPicker {
     if ($dialog.ShowDialog($script:MainForm) -eq "OK") {
         $chosen = @($dialog.Tag)
         $script:AvailableSessions = @($sessions)
-        if ($chosen.Count -eq $sessions.Count) { $script:SelectedSessionIds = $null }
+        if ($chosen.Count -eq $sessions.Count -and $script:SelectedMode -ne "Manage") { $script:SelectedSessionIds = $null }
         else {
             $script:SelectedSessionIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($id in $chosen) { $script:SelectedSessionIds.Add([string]$id) | Out-Null }
@@ -575,6 +659,30 @@ function Show-SessionPicker {
 function Test-UiInput {
     $source = $script:SourceTextBox.Text.Trim()
     $destination = $script:DestinationTextBox.Text.Trim()
+    if ($script:SelectedMode -eq "Manage") {
+        if ([string]::IsNullOrWhiteSpace($source)) { Show-Message (T "chooseCodex") "missingPath"; return $false }
+        if (-not (Test-Path -LiteralPath $source -PathType Container)) { Show-Message (T "codexMissing") "invalidPath"; return $false }
+        if ($null -eq $script:SelectedSessionIds -or $script:SelectedSessionIds.Count -eq 0) {
+            Show-Message (T "chooseManageSessions") "missingPath"
+            return $false
+        }
+        if ($script:SelectedManagementAction -eq "SetProvider" -and [string]::IsNullOrWhiteSpace($destination)) {
+            Show-Message (T "enterProvider") "missingPath"
+            return $false
+        }
+
+        $message = if ($script:SelectedManagementAction -eq "Delete") {
+            Format-T "deleteMessage" @($script:SelectedSessionIds.Count)
+        }
+        else {
+            Format-T "providerUpdateMessage" @($script:SelectedSessionIds.Count, $destination)
+        }
+        $message += "`r`n" + (T "continueQuestion")
+        $title = if ($script:SelectedManagementAction -eq "Delete") { T "confirmDelete" } else { T "confirmProviderUpdate" }
+        if ([System.Windows.Forms.MessageBox]::Show($script:MainForm, $message, $title, "YesNo", "Warning") -ne "Yes") { return $false }
+        return $true
+    }
+
     $zip = if ($script:SelectedMode -eq "Export") { $destination } else { $source }
     $codexHome = if ($script:SelectedMode -eq "Export") { $source } else { $destination }
     if ([string]::IsNullOrWhiteSpace($zip)) { Show-Message (T "chooseZip") "missingPath"; return $false }
@@ -619,9 +727,18 @@ function Remove-SelectionFile {
 function Get-CoreProcessArguments {
     $source = $script:SourceTextBox.Text.Trim()
     $destination = $script:DestinationTextBox.Text.Trim()
-    $archive = if ($script:SelectedMode -eq "Export") { $destination } else { $source }
-    $codexHome = if ($script:SelectedMode -eq "Export") { $source } else { $destination }
-    $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script:CoreScriptPath, "-Mode", $script:SelectedMode, "-ArchivePath", $archive, "-CodexHome", $codexHome)
+    if ($script:SelectedMode -eq "Manage") {
+        $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script:CoreScriptPath,
+            "-Mode", $script:SelectedManagementAction, "-CodexHome", $source)
+        if ($script:SelectedManagementAction -eq "SetProvider") {
+            $arguments += @("-TargetModelProvider", $destination)
+        }
+    }
+    else {
+        $archive = if ($script:SelectedMode -eq "Export") { $destination } else { $source }
+        $codexHome = if ($script:SelectedMode -eq "Export") { $source } else { $destination }
+        $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script:CoreScriptPath, "-Mode", $script:SelectedMode, "-ArchivePath", $archive, "-CodexHome", $codexHome)
+    }
     if ($script:SelectedMode -eq "Export" -and $script:HistoryOnlyCheckBox.Checked) { $arguments += "-HistoryOnly" }
     if ($script:SelectedMode -eq "Export" -and $script:IncludeArtifactsCheckBox.Checked) { $arguments += "-IncludeArtifacts" }
     if ($script:SelectedMode -eq "Export" -and $script:ForceExportOverwrite) { $arguments += "-Force" }
@@ -636,9 +753,10 @@ function Get-CoreProcessArguments {
 
 function Set-UiBusy {
     param([bool]$Busy)
-    foreach ($control in @($script:RunButton, $script:ExportModeButton, $script:ImportModeButton, $script:ChineseButton, $script:EnglishButton,
+    foreach ($control in @($script:RunButton, $script:ExportModeButton, $script:ImportModeButton, $script:ManageModeButton, $script:ChineseButton, $script:EnglishButton,
         $script:SourceTextBox, $script:DestinationTextBox, $script:SourceBrowseButton, $script:DestinationBrowseButton, $script:ChooseSessionsButton,
-        $script:AdvancedButton, $script:HistoryOnlyCheckBox, $script:IncludeArtifactsCheckBox, $script:RewriteProviderCheckBox)) {
+        $script:AdvancedButton, $script:HistoryOnlyCheckBox, $script:IncludeArtifactsCheckBox, $script:RewriteProviderCheckBox,
+        $script:SetProviderActionButton, $script:DeleteActionButton)) {
         $control.Enabled = -not $Busy
     }
     $partial = $null -ne $script:SelectedSessionIds -or ($script:SelectedMode -eq "Import" -and $script:ArchiveIsPartial)
@@ -675,6 +793,7 @@ function Complete-MigrationOperation {
         $script:PercentLabel.Text = "100%"
         $script:StatusLabel.Text = T "completed"
         $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(32, 128, 82)
+        if ($script:SelectedMode -eq "Manage") { Reset-SessionSelection }
     }
     else {
         $script:StatusLabel.Text = T "failed"
@@ -722,7 +841,7 @@ function Start-MigrationOperation {
 }
 
 if (-not (Test-Path -LiteralPath $script:CoreScriptPath -PathType Leaf)) {
-    [System.Windows.Forms.MessageBox]::Show("Missing core script: $script:CoreScriptPath", "Codex History Migrator", "OK", "Error") | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("Missing core script: $script:CoreScriptPath", "Codex Session Manager", "OK", "Error") | Out-Null
     exit 1
 }
 
@@ -743,6 +862,7 @@ $script:ChineseButton = New-SegmentButton 676 22 48 30
 $script:EnglishButton = New-SegmentButton 724 22 48 30
 $script:ExportModeButton = New-SegmentButton 28 76 184
 $script:ImportModeButton = New-SegmentButton 212 76 184
+$script:ManageModeButton = New-SegmentButton 396 76 184
 
 $script:SourceLabel = New-UiLabel "" 28 130 240
 $script:SourceTextBox = [System.Windows.Forms.TextBox]::new()
@@ -758,6 +878,10 @@ $script:SessionSummaryLabel = New-UiLabel "" 28 228 520 32
 $script:SessionSummaryLabel.ForeColor = [System.Drawing.Color]::FromArgb(76, 80, 86)
 $script:ChooseSessionsButton = New-SegmentButton 606 224 166 34
 $script:ChooseSessionsButton.Anchor = "Top, Right"
+
+$script:ManagementActionLabel = New-UiLabel "" 28 274 240
+$script:SetProviderActionButton = New-SegmentButton 28 300 184
+$script:DeleteActionButton = New-SegmentButton 212 300 184
 
 $script:DestinationLabel = New-UiLabel "" 28 274 240
 $script:DestinationTextBox = [System.Windows.Forms.TextBox]::new()
@@ -837,9 +961,10 @@ $script:LogTextBox.Font = [System.Drawing.Font]::new("Consolas", 9)
 $script:LogTextBox.Anchor = "Top, Bottom, Left, Right"
 
 $script:MainForm.Controls.AddRange(@(
-    $script:TitleLabel, $script:ChineseButton, $script:EnglishButton, $script:ExportModeButton, $script:ImportModeButton,
+    $script:TitleLabel, $script:ChineseButton, $script:EnglishButton, $script:ExportModeButton, $script:ImportModeButton, $script:ManageModeButton,
     $script:SourceLabel, $script:SourceTextBox, $script:SourceBrowseButton, $script:SessionsLabel, $script:SessionSummaryLabel,
-    $script:ChooseSessionsButton, $script:DestinationLabel, $script:DestinationTextBox, $script:DestinationBrowseButton,
+    $script:ChooseSessionsButton, $script:ManagementActionLabel, $script:SetProviderActionButton, $script:DeleteActionButton,
+    $script:DestinationLabel, $script:DestinationTextBox, $script:DestinationBrowseButton,
     $script:AdvancedButton, $script:AdvancedPanel, $script:SafetyLabel, $script:RunButton, $script:StatusLabel,
     $script:PercentLabel, $script:ProgressBar, $script:DetailsButton, $script:LogTextBox
 ))
@@ -855,9 +980,14 @@ $script:ModeValues.Export.Source = Get-DefaultCodexHome
 $script:ModeValues.Export.Destination = Join-Path $desktop ("codex-history-{0}.zip" -f [DateTime]::Now.ToString("yyyyMMdd-HHmmss"))
 $script:ModeValues.Import.Source = ""
 $script:ModeValues.Import.Destination = Get-DefaultCodexHome
+$script:ModeValues.Manage.Source = Get-DefaultCodexHome
+$script:ModeValues.Manage.Destination = ""
 
 $script:ExportModeButton.Add_Click({ Set-SelectedMode "Export" })
 $script:ImportModeButton.Add_Click({ Set-SelectedMode "Import" })
+$script:ManageModeButton.Add_Click({ Set-SelectedMode "Manage" })
+$script:SetProviderActionButton.Add_Click({ Set-ManagementAction "SetProvider" })
+$script:DeleteActionButton.Add_Click({ Set-ManagementAction "Delete" })
 $script:ChineseButton.Add_Click({ $script:Language = "zh"; Update-Language })
 $script:EnglishButton.Add_Click({ $script:Language = "en"; Update-Language })
 $script:AdvancedButton.Add_Click({ $script:AdvancedExpanded = -not $script:AdvancedExpanded; Update-Layout })
@@ -868,7 +998,7 @@ $script:SourceTextBox.Add_TextChanged({ Reset-SessionSelection })
 $script:RewriteProviderCheckBox.Add_CheckedChanged({ $script:TargetProviderTextBox.Enabled = $script:RewriteProviderCheckBox.Checked -and $null -eq $script:ActiveProcess })
 
 $script:SourceBrowseButton.Add_Click({
-    if ($script:SelectedMode -eq "Export") {
+    if ($script:SelectedMode -ne "Import") {
         $dialog = [System.Windows.Forms.FolderBrowserDialog]::new()
         $dialog.Description = T "browseCodex"
         if (Test-Path -LiteralPath $script:SourceTextBox.Text -PathType Container) { $dialog.SelectedPath = $script:SourceTextBox.Text }
@@ -880,7 +1010,7 @@ $script:SourceBrowseButton.Add_Click({
         $dialog.CheckFileExists = $true
     }
     if ($dialog.ShowDialog($script:MainForm) -eq "OK") {
-        $script:SourceTextBox.Text = if ($script:SelectedMode -eq "Export") { $dialog.SelectedPath } else { $dialog.FileName }
+        $script:SourceTextBox.Text = if ($script:SelectedMode -ne "Import") { $dialog.SelectedPath } else { $dialog.FileName }
     }
     $dialog.Dispose()
 })
@@ -915,6 +1045,7 @@ $script:MainForm.Add_FormClosing({
 })
 
 Set-SelectedMode "Export"
+Set-ManagementAction "SetProvider"
 [System.Windows.Forms.Application]::Run($script:MainForm)
 
 Remove-SelectionFile
