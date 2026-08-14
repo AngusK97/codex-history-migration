@@ -21,7 +21,7 @@ cd codex-history-migration
 
 - `Export`：将活动会话、归档会话、标题索引和桌面端状态打包为 `.zip`。
 - `Inspect`：在不修改本机数据的情况下校验归档格式、文件大小和逐文件 SHA-256。
-- `Import`：校验后恢复历史；目标端已有历史时按会话文件合并，并先自动创建回滚包。
+- `Import`：校验后恢复历史；目标端已有历史时合并会话文件、标题索引和兼容的桌面端线程索引，并先自动创建回滚包。
 - 恢复时可把迁入会话的 `model_provider` 重映射到新电脑当前 provider，并同步桌面端线程索引。
 - 默认排除 `auth.json`、`.sandbox-secrets/`、OAuth 锁和其他认证状态。
 - 默认拒绝在 Codex、Codex app server 或 ChatGPT 桌面端运行时导出或恢复，避免复制不一致的 SQLite 状态。
@@ -90,6 +90,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 codex resume --all
 ```
 
+如果旧版本工具已经显示 `copied` 大于零、但 Codex Desktop 中没有出现历史，可以升级工具后关闭 Codex，再对同一个 ZIP 重复执行恢复。文件合并是幂等的，新版本会补齐此前缺失的 `threads` 索引行。
+
 ## 导出内容
 
 默认包含：
@@ -140,10 +142,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 - 导出来源和恢复目标的路径链中存在 junction、符号链接或其他 reparse point 时，工具会拒绝操作，避免读写越出 Codex 数据目录。
 - 目标端没有历史时，自动恢复迁移包中的桌面端状态。
 - 目标端已有历史时，保留目标端同名会话，只复制缺失会话，并按会话 ID 合并 `session_index.jsonl`。
+- 若来源与目标存在同名且表结构兼容的 `state_*.sqlite`，工具会把来源 `threads` 表中目标缺失的会话行合并到目标数据库；已有目标行不覆盖。
+- 合并或恢复桌面端状态后，迁入线程的 `rollout_path` 会改为新电脑上实际写入的 transcript 路径，避免继续引用旧电脑绝对路径。
 - 目标端已有历史时默认不覆盖桌面端状态；确实需要用来源状态替换时增加 `-RestoreAppState`。
 - 目标端存在受支持的数据时，恢复前会在 `.codex` 的同级目录 `codex-history-backups/` 创建回滚 ZIP。
 - 同名会话文件内容不同时，目标端版本会保留，来源版本仍完整保存在导入 ZIP 中，并在结果中报告冲突数。
-- `-RewriteModelProvider` 只改写成功迁入会话的 `session_meta.payload.model_provider`，并按会话 ID 同步 `state_*.sqlite` 的 `threads.model_provider`；不会修改目标端其他会话。
+- `-RewriteModelProvider` 只改写成功迁入会话的 `session_meta.payload.model_provider`，并按会话 ID 同步新合并的 `state_*.sqlite` 线程行；不会覆盖目标端原有的不同会话。
+- 若来源与目标线程表结构不兼容，SQLite 合并会安全跳过并显示警告，transcript 和标题索引仍按原有规则恢复。
 - 未指定 `-TargetModelProvider` 时，按活动 profile、根级 `model_provider`、`openai` 默认值的顺序解析新电脑 provider。
 
 ## 参数
@@ -158,6 +163,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 - `-TargetModelProvider`：显式指定目标 provider ID；省略时从目标 `config.toml` 自动解析。
 - `-AllowRunningCodex`：跳过进程检查。只适合隔离测试；真实迁移不建议使用。
 - `-Force`：导出时允许覆盖已存在的 ZIP，不影响导入冲突策略。
+
+## 验证
+
+运行 PowerShell 语法检查和回归测试：
+
+```powershell
+$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1'
+foreach ($file in $files) {
+    $tokens = $null
+    $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { $errors; throw "PowerShell syntax check failed: $file" }
+}
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Regression.Tests.ps1
+```
 
 ## 边界
 

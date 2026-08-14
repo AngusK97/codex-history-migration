@@ -29,7 +29,7 @@ $ErrorActionPreference = "Stop"
 
 # 工具和归档格式版本用于拒绝不兼容的迁移包。
 $script:ToolName = "CodexHistoryMigration"
-$script:ToolVersion = "1.0.0"
+$script:ToolVersion = "1.0.1"
 $script:SchemaVersion = 1
 $script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $script:SensitiveTopLevelNames = @(
@@ -697,13 +697,13 @@ function New-ProviderRewrittenSessionFile {
             continue
         }
 
+        $sessionId = [string]$record.payload.id
         $providerProperty = $record.payload.PSObject.Properties["model_provider"]
         if ($null -eq $providerProperty) {
-            continue
+            break
         }
 
         $metadataFound = $true
-        $sessionId = [string]$record.payload.id
         if ([string]$providerProperty.Value -cne $Provider) {
             $record.payload.model_provider = $Provider
             $lines[$index] = $record | ConvertTo-Json -Depth 100 -Compress
@@ -728,6 +728,32 @@ function New-ProviderRewrittenSessionFile {
         MetadataFound = $true
         Changed = $changed
     }
+}
+
+# 读取 transcript 的稳定会话 ID，不依赖 provider 字段是否存在。
+function Get-HistorySessionId {
+    param([Parameter(Mandatory = $true)][string]$SourceFile)
+
+    $reader = [System.IO.StreamReader]::new($SourceFile, [System.Text.Encoding]::UTF8, $true)
+    try {
+        while (-not $reader.EndOfStream) {
+            try {
+                $record = $reader.ReadLine() | ConvertFrom-Json
+            }
+            catch {
+                continue
+            }
+
+            if ([string]$record.type -eq "session_meta" -and $null -ne $record.payload) {
+                return [string]$record.payload.id
+            }
+        }
+    }
+    finally {
+        $reader.Dispose()
+    }
+
+    return ""
 }
 
 # 加载 Windows 自带 SQLite 接口，用于同步桌面端线程索引中的 provider。
@@ -774,6 +800,9 @@ public static class CodexHistorySqlite
 
     [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern int sqlite3_changes(IntPtr database);
+
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.Cdecl, EntryPoint = "sqlite3_column_text16")]
+    private static extern IntPtr ColumnText(IntPtr statement, int column);
 
     [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern int sqlite3_busy_timeout(IntPtr database, int milliseconds);
@@ -842,6 +871,111 @@ public static class CodexHistorySqlite
         }
     }
 
+    // 合并来源线程索引；只有整体恢复来源状态时才允许更新已存在的映射行。
+    public static int MergeThreads(
+        string targetDatabasePath,
+        string sourceDatabasePath,
+        string provider,
+        string[] sessionIds,
+        string[] rolloutPaths,
+        bool updateExistingMappings)
+    {
+        if (sessionIds.Length != rolloutPaths.Length)
+        {
+            throw new ArgumentException("Session IDs and rollout paths must have the same length.");
+        }
+        if (sessionIds.Length == 0)
+        {
+            return 0;
+        }
+
+        IntPtr database;
+        int result = Open(targetDatabasePath, out database);
+        if (result != SqliteOk)
+        {
+            throw new InvalidOperationException("Cannot open SQLite database: " + targetDatabasePath);
+        }
+
+        bool sourceAttached = false;
+        bool transactionStarted = false;
+        IntPtr statement = IntPtr.Zero;
+        try
+        {
+            sqlite3_busy_timeout(database, 5000);
+            ExecuteBoundText(database, "ATTACH DATABASE ?1 AS codex_history_source", sourceDatabasePath);
+            sourceAttached = true;
+            string targetSchema = ReadThreadColumnSignature(database, "main");
+            string sourceSchema = ReadThreadColumnSignature(database, "codex_history_source");
+            if (!String.Equals(targetSchema, sourceSchema, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Source and target threads tables have different column layouts.");
+            }
+            Execute(database, "BEGIN IMMEDIATE");
+            transactionStarted = true;
+            Execute(database, "CREATE TEMP TABLE codex_history_imports (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)");
+
+            result = Prepare(database, "INSERT INTO temp.codex_history_imports (id, rollout_path) VALUES (?1, ?2)", -1, out statement, IntPtr.Zero);
+            EnsureSuccess(database, result, "prepare thread mapping insert");
+            for (int index = 0; index < sessionIds.Length; index++)
+            {
+                EnsureSuccess(database, BindText(statement, 1, sessionIds[index], -1, SqliteTransient), "bind session id");
+                EnsureSuccess(database, BindText(statement, 2, rolloutPaths[index], -1, SqliteTransient), "bind rollout path");
+                result = sqlite3_step(statement);
+                if (result != SqliteDone)
+                {
+                    throw new InvalidOperationException("SQLite thread mapping insert failed: " + GetError(database));
+                }
+                sqlite3_reset(statement);
+                sqlite3_clear_bindings(statement);
+            }
+            sqlite3_finalize(statement);
+            statement = IntPtr.Zero;
+
+            Execute(database, "CREATE TEMP TABLE codex_history_added_ids AS " +
+                "SELECT mapping.id FROM temp.codex_history_imports AS mapping " +
+                "INNER JOIN codex_history_source.threads AS source ON source.id = mapping.id " +
+                "LEFT JOIN main.threads AS target ON target.id = mapping.id WHERE target.id IS NULL");
+            Execute(database, "INSERT OR IGNORE INTO main.threads " +
+                "SELECT source.* FROM codex_history_source.threads AS source " +
+                "INNER JOIN temp.codex_history_added_ids AS added ON added.id = source.id");
+            int addedRows = sqlite3_changes(database);
+
+            string mappedIds = updateExistingMappings ? "temp.codex_history_imports" : "temp.codex_history_added_ids";
+            Execute(database, "UPDATE main.threads SET rollout_path = " +
+                "(SELECT mapping.rollout_path FROM temp.codex_history_imports AS mapping WHERE mapping.id = main.threads.id) " +
+                "WHERE id IN (SELECT id FROM " + mappedIds + ")");
+            if (!String.IsNullOrWhiteSpace(provider))
+            {
+                ExecuteBoundText(database, "UPDATE main.threads SET model_provider = ?1 WHERE id IN (SELECT id FROM " + mappedIds + ")", provider);
+            }
+
+            Execute(database, "COMMIT");
+            transactionStarted = false;
+            Execute(database, "PRAGMA wal_checkpoint(TRUNCATE)");
+            return addedRows;
+        }
+        catch
+        {
+            if (statement != IntPtr.Zero)
+            {
+                sqlite3_finalize(statement);
+            }
+            if (transactionStarted)
+            {
+                try { Execute(database, "ROLLBACK"); } catch { }
+            }
+            throw;
+        }
+        finally
+        {
+            if (sourceAttached)
+            {
+                try { Execute(database, "DETACH DATABASE codex_history_source"); } catch { }
+            }
+            sqlite3_close(database);
+        }
+    }
+
     // 执行不需要绑定参数的 SQLite 语句。
     private static void Execute(IntPtr database, string sql)
     {
@@ -859,6 +993,55 @@ public static class CodexHistorySqlite
             {
                 throw new InvalidOperationException("SQLite statement failed: " + GetError(database));
             }
+        }
+        finally
+        {
+            sqlite3_finalize(statement);
+        }
+    }
+
+    private static void ExecuteBoundText(IntPtr database, string sql, string value)
+    {
+        IntPtr statement;
+        int result = Prepare(database, sql, -1, out statement, IntPtr.Zero);
+        EnsureSuccess(database, result, "prepare bound SQL");
+        try
+        {
+            EnsureSuccess(database, BindText(statement, 1, value, -1, SqliteTransient), "bind SQL value");
+            result = sqlite3_step(statement);
+            if (result != SqliteDone)
+            {
+                throw new InvalidOperationException("SQLite statement failed: " + GetError(database));
+            }
+        }
+        finally
+        {
+            sqlite3_finalize(statement);
+        }
+    }
+
+    private static string ReadThreadColumnSignature(IntPtr database, string schema)
+    {
+        IntPtr statement;
+        int result = Prepare(database, "PRAGMA " + schema + ".table_info(threads)", -1, out statement, IntPtr.Zero);
+        EnsureSuccess(database, result, "read threads schema");
+        try
+        {
+            System.Collections.Generic.List<string> columns = new System.Collections.Generic.List<string>();
+            while ((result = sqlite3_step(statement)) == SqliteRow)
+            {
+                IntPtr value = ColumnText(statement, 1);
+                columns.Add(value == IntPtr.Zero ? "" : Marshal.PtrToStringUni(value));
+            }
+            if (result != SqliteDone)
+            {
+                throw new InvalidOperationException("Could not read threads schema: " + GetError(database));
+            }
+            if (columns.Count == 0)
+            {
+                throw new InvalidOperationException("The threads table is missing.");
+            }
+            return String.Join("\u001f", columns.ToArray());
         }
         finally
         {
@@ -920,6 +1103,73 @@ function Update-ImportedProviderIndexes {
     }
 
     return $updatedRows
+}
+
+# 将来源 state 数据库中的缺失线程合并到目标，并绑定到目标电脑的 transcript 路径。
+function Merge-ImportedThreadIndexes {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)][hashtable]$SessionPaths,
+        [AllowEmptyString()][string]$Provider,
+        [Parameter(Mandatory = $true)][bool]$UpdateExistingMappings
+    )
+
+    if ($SessionPaths.Count -eq 0) {
+        return 0
+    }
+
+    Initialize-SqliteProviderUpdater
+    $sessionIds = @($SessionPaths.Keys | Sort-Object)
+    $rolloutPaths = @($sessionIds | ForEach-Object { [string]$SessionPaths[$_] })
+    $addedRows = 0
+
+    foreach ($relativeDirectory in @("", "sqlite")) {
+        $sourceDirectory = if ([string]::IsNullOrWhiteSpace($relativeDirectory)) {
+            $SourceRoot
+        }
+        else {
+            Join-Path $SourceRoot $relativeDirectory
+        }
+        $targetDirectory = if ([string]::IsNullOrWhiteSpace($relativeDirectory)) {
+            $TargetRoot
+        }
+        else {
+            Join-Path $TargetRoot $relativeDirectory
+        }
+
+        if (-not (Test-Path -LiteralPath $sourceDirectory -PathType Container) -or
+            -not (Test-Path -LiteralPath $targetDirectory -PathType Container)) {
+            continue
+        }
+
+        foreach ($targetDatabase in Get-ChildItem -LiteralPath $targetDirectory -File -Filter "state_*.sqlite" -ErrorAction SilentlyContinue) {
+            $sourceDatabase = Join-Path $sourceDirectory $targetDatabase.Name
+            if (-not (Test-Path -LiteralPath $sourceDatabase -PathType Leaf)) {
+                continue
+            }
+
+            try {
+                Assert-PathWithinRootWithoutReparsePoint -Root $SourceRoot -PathValue $sourceDatabase `
+                    -Operation "Source SQLite thread merge"
+                Assert-PathWithinRootWithoutReparsePoint -Root $TargetRoot -PathValue $targetDatabase.FullName `
+                    -Operation "Target SQLite thread merge"
+                $addedRows += [CodexHistorySqlite]::MergeThreads(
+                    $targetDatabase.FullName,
+                    $sourceDatabase,
+                    $Provider,
+                    $sessionIds,
+                    $rolloutPaths,
+                    $UpdateExistingMappings
+                )
+            }
+            catch {
+                Write-Warning "Could not merge thread indexes into $($targetDatabase.FullName): $($_.Exception.Message)"
+            }
+        }
+    }
+
+    return $addedRows
 }
 
 # 合并标题索引；保留目标端已有记录，仅追加此前不存在的会话 ID。
@@ -1029,6 +1279,7 @@ function Import-HistoryArchive {
         $providerRecordsRewritten = 0
         $providerRecordsSkipped = 0
         $providerRewriteFiles = @{}
+        $sessionIdsByRelativePath = @{}
         if ($RemapModelProvider) {
             $resolvedModelProvider = Resolve-TargetModelProvider -TargetRoot $TargetRoot -RequestedProvider $RequestedModelProvider
             $rewriteRoot = Join-Path $validation.TemporaryRoot "provider-rewritten"
@@ -1042,11 +1293,28 @@ function Import-HistoryArchive {
                 $rewrittenFile = Join-Path $rewriteRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
                 $rewrite = New-ProviderRewrittenSessionFile -SourceFile $sourceFile -DestinationFile $rewrittenFile `
                     -Provider $resolvedModelProvider
+                if (-not [string]::IsNullOrWhiteSpace($rewrite.SessionId)) {
+                    $sessionIdsByRelativePath[$relativePath] = [string]$rewrite.SessionId
+                }
                 if ($rewrite.MetadataFound) {
                     $providerRewriteFiles[$relativePath] = $rewrite
                 }
                 else {
                     $providerRecordsSkipped++
+                }
+            }
+        }
+        else {
+            foreach ($entry in @($validation.Manifest.files)) {
+                $relativePath = ([string]$entry.path).Replace('\', '/')
+                if ([string]$entry.category -ne "history" -or [System.IO.Path]::GetExtension($relativePath) -ine ".jsonl") {
+                    continue
+                }
+
+                $sourceFile = Join-Path $validation.DataRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+                $sessionId = Get-HistorySessionId -SourceFile $sourceFile
+                if (-not [string]::IsNullOrWhiteSpace($sessionId)) {
+                    $sessionIdsByRelativePath[$relativePath] = $sessionId
                 }
             }
         }
@@ -1075,6 +1343,7 @@ function Import-HistoryArchive {
         $appStateRestored = 0
         $restoreAppStateNow = $ForceAppStateRestore -or (-not $hadHistory)
         $importedSessionIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $importedSessionPaths = @{}
 
         foreach ($entry in @($validation.Manifest.files)) {
             $relativePath = ([string]$entry.path).Replace('\', '/')
@@ -1108,12 +1377,20 @@ function Import-HistoryArchive {
                 $importedSessionIds.Add([string]$rewrite.SessionId) | Out-Null
                 if ($rewrite.Changed) { $providerRecordsRewritten++ }
             }
+            if ($category -eq "history" -and $result -ne "conflict" -and $sessionIdsByRelativePath.ContainsKey($relativePath)) {
+                $sessionId = [string]$sessionIdsByRelativePath[$relativePath]
+                $importedSessionIds.Add($sessionId) | Out-Null
+                $importedSessionPaths[$sessionId] = $destinationFile
+            }
         }
 
         $sourceIndex = Join-Path $validation.DataRoot "session_index.jsonl"
         $destinationIndex = Join-Path $TargetRoot "session_index.jsonl"
         Assert-PathWithinRootWithoutReparsePoint -Root $TargetRoot -PathValue $destinationIndex -Operation "Import destination"
         $indexEntriesAdded = Merge-SessionIndex -SourceIndex $sourceIndex -DestinationIndex $destinationIndex
+        $threadIndexRowsAdded = Merge-ImportedThreadIndexes -SourceRoot $validation.DataRoot -TargetRoot $TargetRoot `
+            -SessionPaths $importedSessionPaths -Provider $resolvedModelProvider `
+            -UpdateExistingMappings:$restoreAppStateNow
         $providerIndexRowsUpdated = if ($RemapModelProvider) {
             Update-ImportedProviderIndexes -TargetRoot $TargetRoot -Provider $resolvedModelProvider `
                 -SessionIds @($importedSessionIds)
@@ -1128,6 +1405,7 @@ function Import-HistoryArchive {
             UnchangedFiles = $unchanged
             ConflictingFilesKeptAtDestination = $conflicts
             IndexEntriesAdded = $indexEntriesAdded
+            ThreadIndexRowsAdded = $threadIndexRowsAdded
             AppStateFilesRestored = $appStateRestored
             BackupArchive = $backupPath
             ModelProvider = $resolvedModelProvider
@@ -1195,9 +1473,9 @@ try {
             $result = Import-HistoryArchive -SourceArchive $resolvedArchive -TargetRoot $resolvedCodexHome `
                 -ForceAppStateRestore:$RestoreAppState -RemapModelProvider:$RewriteModelProvider `
                 -RequestedModelProvider $TargetModelProvider
-            Write-Host ("import complete`tcodexHome={0}`tcopied={1}`tunchanged={2}`tconflicts={3}`tindexAdded={4}`tappState={5}`tprovider={6}`tproviderFiles={7}`tproviderIndexRows={8}`tproviderSkipped={9}" -f `
+            Write-Host ("import complete`tcodexHome={0}`tcopied={1}`tunchanged={2}`tconflicts={3}`tindexAdded={4}`tthreadIndexAdded={5}`tappState={6}`tprovider={7}`tproviderFiles={8}`tproviderIndexRows={9}`tproviderSkipped={10}" -f `
                 $result.CodexHome, $result.CopiedFiles, $result.UnchangedFiles, `
-                $result.ConflictingFilesKeptAtDestination, $result.IndexEntriesAdded, $result.AppStateFilesRestored, `
+                $result.ConflictingFilesKeptAtDestination, $result.IndexEntriesAdded, $result.ThreadIndexRowsAdded, $result.AppStateFilesRestored, `
                 $result.ModelProvider, $result.ProviderRecordsRewritten, $result.ProviderIndexRowsUpdated, $result.ProviderRecordsSkipped)
             if (-not [string]::IsNullOrWhiteSpace($result.BackupArchive)) {
                 Write-Host ("backup created`tarchive={0}" -f $result.BackupArchive)
