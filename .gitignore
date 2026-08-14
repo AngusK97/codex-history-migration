@@ -1,0 +1,11 @@
+# Migration archives contain private conversation data.
+*.zip
+
+# Local Codex data and migration backups must never be committed.
+.codex/
+codex-history-backups/
+
+# Temporary files produced during local validation.
+*.tmp
+*.log
+.test-*/
