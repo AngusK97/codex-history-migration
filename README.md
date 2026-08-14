@@ -26,7 +26,7 @@ cd codex-history-migration
 - `Delete`：只移除明确选中的本机会话，同时清理 transcript、标题索引、线程行、动态工具和派生关系。
 - 导出和恢复均可查看、搜索并选择会话；部分操作会同步过滤 transcript、标题索引和桌面端线程元数据。
 - GUI 支持中文/英文即时切换，并在导出和恢复过程中显示阶段和确定百分比。
-- GUI 使用“导出 / 恢复 / 管理”三任务结构；会话列表显示当前 Provider，管理操作不会默认选择全部会话。
+- GUI 使用左侧“导出 / 恢复 / 管理”任务导航、单一主工作区和固定执行状态区；会话列表显示当前 Provider，管理操作不会默认选择全部会话。
 - 恢复时可把迁入会话的 `model_provider` 重映射到新电脑当前 provider，并同步桌面端线程索引。
 - 默认排除 `auth.json`、`.sandbox-secrets/`、OAuth 锁和其他认证状态。
 - 默认拒绝在 Codex、Codex app server 或 ChatGPT 桌面端运行时导出或恢复，避免复制不一致的 SQLite 状态。

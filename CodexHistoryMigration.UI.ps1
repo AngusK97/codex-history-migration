@@ -35,6 +35,9 @@ $script:Strings = @{
         export = "导出"
         import = "恢复"
         manage = "管理"
+        exportTitle = "导出会话备份"
+        importTitle = "恢复会话备份"
+        manageTitle = "管理本机会话"
         chinese = "中"
         english = "EN"
         exportSource = "Codex 数据目录"
@@ -141,6 +144,9 @@ $script:Strings = @{
         export = "Export"
         import = "Restore"
         manage = "Manage"
+        exportTitle = "Export session backup"
+        importTitle = "Restore session backup"
+        manageTitle = "Manage local sessions"
         chinese = "中"
         english = "EN"
         exportSource = "Codex data folder"
@@ -244,6 +250,25 @@ $script:Strings = @{
     }
 }
 
+$script:Palette = @{
+    Accent = [System.Drawing.Color]::FromArgb(24, 95, 165)
+    AccentHover = [System.Drawing.Color]::FromArgb(17, 82, 145)
+    AccentSoft = [System.Drawing.Color]::FromArgb(231, 241, 251)
+    Background = [System.Drawing.Color]::FromArgb(247, 248, 250)
+    Surface = [System.Drawing.Color]::White
+    Sidebar = [System.Drawing.Color]::FromArgb(241, 243, 246)
+    Border = [System.Drawing.Color]::FromArgb(211, 215, 221)
+    Text = [System.Drawing.Color]::FromArgb(34, 38, 44)
+    MutedText = [System.Drawing.Color]::FromArgb(90, 96, 105)
+    Warning = [System.Drawing.Color]::FromArgb(151, 78, 24)
+    Success = [System.Drawing.Color]::FromArgb(31, 122, 78)
+    Danger = [System.Drawing.Color]::FromArgb(180, 43, 43)
+    DangerHover = [System.Drawing.Color]::FromArgb(156, 34, 34)
+    DangerSoft = [System.Drawing.Color]::FromArgb(252, 235, 235)
+}
+$script:NavigationFont = [System.Drawing.Font]::new("Microsoft YaHei UI", 9)
+$script:NavigationActiveFont = [System.Drawing.Font]::new("Microsoft YaHei UI", 9, [System.Drawing.FontStyle]::Bold)
+
 function T {
     param([Parameter(Mandatory = $true)][string]$Key)
     if ($script:Strings[$script:Language].ContainsKey($Key)) { return [string]$script:Strings[$script:Language][$Key] }
@@ -288,7 +313,7 @@ function New-UiLabel {
     $label.Text = $Text
     $label.Location = [System.Drawing.Point]::new($X, $Y)
     $label.Size = [System.Drawing.Size]::new($Width, $Height)
-    $label.ForeColor = [System.Drawing.Color]::FromArgb(42, 45, 51)
+    $label.ForeColor = $script:Palette.Text
     $label.TextAlign = "MiddleLeft"
     return $label
 }
@@ -301,21 +326,54 @@ function New-SegmentButton {
     $button.FlatStyle = "Flat"
     $button.FlatAppearance.BorderSize = 1
     $button.Cursor = "Hand"
+    $button.UseVisualStyleBackColor = $false
     return $button
 }
 
 function Set-SegmentState {
-    param([System.Windows.Forms.Button]$Button, [bool]$Active)
-    $accent = [System.Drawing.Color]::FromArgb(20, 103, 184)
+    param([System.Windows.Forms.Button]$Button, [bool]$Active, [bool]$Danger = $false)
+    $accent = if ($Danger) { $script:Palette.Danger } else { $script:Palette.Accent }
     if ($Active) {
         $Button.BackColor = $accent
         $Button.ForeColor = [System.Drawing.Color]::White
         $Button.FlatAppearance.BorderColor = $accent
+        $Button.FlatAppearance.MouseOverBackColor = $(if ($Danger) { $script:Palette.DangerHover } else { $script:Palette.AccentHover })
     }
     else {
-        $Button.BackColor = [System.Drawing.Color]::FromArgb(238, 240, 243)
-        $Button.ForeColor = [System.Drawing.Color]::FromArgb(56, 60, 67)
-        $Button.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(207, 211, 217)
+        $Button.BackColor = $(if ($Danger) { $script:Palette.DangerSoft } else { $script:Palette.Background })
+        $Button.ForeColor = $(if ($Danger) { $script:Palette.Danger } else { $script:Palette.Text })
+        $Button.FlatAppearance.BorderColor = $(if ($Danger) { [System.Drawing.Color]::FromArgb(225, 178, 178) } else { $script:Palette.Border })
+        $Button.FlatAppearance.MouseOverBackColor = $(if ($Danger) { [System.Drawing.Color]::FromArgb(248, 224, 224) } else { [System.Drawing.Color]::FromArgb(235, 238, 242) })
+    }
+}
+
+function New-NavigationButton {
+    param([int]$Y)
+    $button = [System.Windows.Forms.Button]::new()
+    $button.Location = [System.Drawing.Point]::new(16, $Y)
+    $button.Size = [System.Drawing.Size]::new(160, 44)
+    $button.FlatStyle = "Flat"
+    $button.FlatAppearance.BorderSize = 0
+    $button.TextAlign = "MiddleLeft"
+    $button.Padding = [System.Windows.Forms.Padding]::new(18, 0, 0, 0)
+    $button.Cursor = "Hand"
+    $button.UseVisualStyleBackColor = $false
+    return $button
+}
+
+function Set-NavigationState {
+    param([System.Windows.Forms.Button]$Button, [bool]$Active)
+    if ($Active) {
+        $Button.BackColor = $script:Palette.AccentSoft
+        $Button.ForeColor = $script:Palette.Accent
+        $Button.Font = $script:NavigationActiveFont
+        $Button.FlatAppearance.MouseOverBackColor = $script:Palette.AccentSoft
+    }
+    else {
+        $Button.BackColor = $script:Palette.Sidebar
+        $Button.ForeColor = $script:Palette.Text
+        $Button.Font = $script:NavigationFont
+        $Button.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(232, 235, 239)
     }
 }
 
@@ -358,39 +416,30 @@ function Save-ModeValues {
 
 function Update-Layout {
     $isManage = $script:SelectedMode -eq "Manage"
-    $advancedHeight = if (-not $isManage -and $script:AdvancedExpanded) { 92 } else { 0 }
     $script:AdvancedButton.Visible = -not $isManage
     $script:AdvancedPanel.Visible = -not $isManage -and $script:AdvancedExpanded
-    $script:AdvancedPanel.Location = [System.Drawing.Point]::new(28, 372)
-    $script:AdvancedPanel.Size = [System.Drawing.Size]::new(744, $advancedHeight)
     $script:ManagementActionLabel.Visible = $isManage
     $script:SetProviderActionButton.Visible = $isManage
     $script:DeleteActionButton.Visible = $isManage
-    $script:DestinationLabel.Location = [System.Drawing.Point]::new(28, $(if ($isManage) { 344 } else { 274 }))
-    $script:DestinationTextBox.Location = [System.Drawing.Point]::new(28, $(if ($isManage) { 370 } else { 300 }))
-    $script:DestinationBrowseButton.Location = [System.Drawing.Point]::new(718, $(if ($isManage) { 368 } else { 298 }))
+    $script:DestinationLabel.Location = [System.Drawing.Point]::new(32, $(if ($isManage) { 272 } else { 184 }))
+    $script:DestinationTextBox.Location = [System.Drawing.Point]::new(32, $(if ($isManage) { 298 } else { 210 }))
+    $script:DestinationBrowseButton.Location = [System.Drawing.Point]::new(652, $(if ($isManage) { 296 } else { 208 }))
     $script:DestinationLabel.Visible = -not $isManage -or $script:SelectedManagementAction -eq "SetProvider"
     $script:DestinationTextBox.Visible = -not $isManage -or $script:SelectedManagementAction -eq "SetProvider"
     $script:DestinationBrowseButton.Visible = -not $isManage
-    $actionY = if ($isManage) { 420 } else { 388 + $advancedHeight }
-    $script:SafetyLabel.Location = [System.Drawing.Point]::new(28, ($actionY + 2))
-    $script:RunButton.Location = [System.Drawing.Point]::new(606, $actionY)
-    $script:StatusLabel.Location = [System.Drawing.Point]::new(28, ($actionY + 54))
-    $script:PercentLabel.Location = [System.Drawing.Point]::new(708, ($actionY + 54))
-    $script:ProgressBar.Location = [System.Drawing.Point]::new(28, ($actionY + 82))
-    $script:DetailsButton.Location = [System.Drawing.Point]::new(28, ($actionY + 102))
-    $script:LogTextBox.Location = [System.Drawing.Point]::new(28, ($actionY + 136))
+    $script:FooterPanel.Height = if ($script:DetailsExpanded) { 306 } else { 142 }
     $script:LogTextBox.Visible = $script:DetailsExpanded
-    $script:LogTextBox.Size = [System.Drawing.Size]::new(744, 160)
-    $script:AdvancedButton.Text = $(if ($script:AdvancedExpanded) { "- " } else { "+ " }) + (T "advanced")
-    $script:DetailsButton.Text = $(if ($script:DetailsExpanded) { "- " } else { "+ " }) + (T "details")
-    $height = if ($script:DetailsExpanded) { $actionY + 320 } else { $actionY + 146 }
-    $script:MainForm.ClientSize = [System.Drawing.Size]::new($script:MainForm.ClientSize.Width, $height)
+    $script:AdvancedButton.Text = $(if ($script:AdvancedExpanded) { "v " } else { "> " }) + (T "advanced")
+    $script:DetailsButton.Text = $(if ($script:DetailsExpanded) { "v " } else { "> " }) + (T "details")
+    $script:ExportIndicator.Visible = $script:SelectedMode -eq "Export"
+    $script:ImportIndicator.Visible = $script:SelectedMode -eq "Import"
+    $script:ManageIndicator.Visible = $script:SelectedMode -eq "Manage"
 }
 
 function Update-Language {
     $script:MainForm.Text = T "appTitle"
     $script:TitleLabel.Text = T "appTitle"
+    $script:TaskTitleLabel.Text = T $(switch ($script:SelectedMode) { "Export" { "exportTitle" }; "Import" { "importTitle" }; default { "manageTitle" } })
     $script:ExportModeButton.Text = T "export"
     $script:ImportModeButton.Text = T "import"
     $script:ManageModeButton.Text = T "manage"
@@ -415,11 +464,18 @@ function Update-Language {
     }
     $script:RunButton.Text = T $runTextKey
     $script:RunButton.BackColor = if ($script:SelectedMode -eq "Manage" -and $script:SelectedManagementAction -eq "Delete") {
-        [System.Drawing.Color]::FromArgb(185, 46, 46)
+        $script:Palette.Danger
     }
-    else { [System.Drawing.Color]::FromArgb(20, 103, 184) }
+    else { $script:Palette.Accent }
+    $script:RunButton.FlatAppearance.MouseOverBackColor = if ($script:SelectedMode -eq "Manage" -and $script:SelectedManagementAction -eq "Delete") {
+        $script:Palette.DangerHover
+    }
+    else { $script:Palette.AccentHover }
     $script:SafetyLabel.Text = T "safety"
-    if ($null -eq $script:ActiveProcess) { $script:StatusLabel.Text = T $script:CurrentStatusKey }
+    if ($null -eq $script:ActiveProcess) {
+        $script:StatusLabel.Text = T $script:CurrentStatusKey
+        $script:StatusLabel.ForeColor = $script:Palette.Text
+    }
     Set-SegmentState $script:ChineseButton ($script:Language -eq "zh")
     Set-SegmentState $script:EnglishButton ($script:Language -eq "en")
     $script:ToolTip.SetToolTip($script:SourceBrowseButton, (T $(if ($script:SelectedMode -eq "Import") { "browseOpenZip" } else { "browseCodex" })))
@@ -447,9 +503,10 @@ function Set-SelectedMode {
     $script:CurrentStatusKey = switch ($Mode) { "Export" { "readyExport" }; "Import" { "readyImport" }; default { "readyManage" } }
     $script:ExportOptionsPanel.Visible = $Mode -eq "Export"
     $script:ImportOptionsPanel.Visible = $Mode -eq "Import"
-    Set-SegmentState $script:ExportModeButton ($Mode -eq "Export")
-    Set-SegmentState $script:ImportModeButton ($Mode -eq "Import")
-    Set-SegmentState $script:ManageModeButton ($Mode -eq "Manage")
+    Set-NavigationState $script:ExportModeButton ($Mode -eq "Export")
+    Set-NavigationState $script:ImportModeButton ($Mode -eq "Import")
+    Set-NavigationState $script:ManageModeButton ($Mode -eq "Manage")
+    $script:BodyPanel.AutoScrollPosition = [System.Drawing.Point]::new(0, 0)
     $script:ProgressBar.Value = 0
     $script:PercentLabel.Text = "0%"
     Update-Language
@@ -460,7 +517,7 @@ function Set-ManagementAction {
 
     $script:SelectedManagementAction = $Action
     Set-SegmentState $script:SetProviderActionButton ($Action -eq "SetProvider")
-    Set-SegmentState $script:DeleteActionButton ($Action -eq "Delete")
+    Set-SegmentState $script:DeleteActionButton ($Action -eq "Delete") $true
     Update-Language
 }
 
@@ -536,27 +593,34 @@ function Show-SessionPicker {
     $dialog = [System.Windows.Forms.Form]::new()
     $dialog.Text = T "sessionPickerTitle"
     $dialog.StartPosition = "CenterParent"
-    $dialog.ClientSize = [System.Drawing.Size]::new(820, 500)
-    $dialog.MinimumSize = [System.Drawing.Size]::new(780, 480)
+    $dialog.ClientSize = [System.Drawing.Size]::new(880, 560)
+    $dialog.MinimumSize = [System.Drawing.Size]::new(820, 520)
     $dialog.Font = $script:MainForm.Font
-    $dialog.BackColor = [System.Drawing.Color]::FromArgb(248, 249, 251)
+    $dialog.BackColor = $script:Palette.Surface
+    $dialog.AutoScaleMode = "Dpi"
+    $dialog.ShowIcon = $false
 
-    $searchLabel = New-UiLabel (T "search") 20 16 80
+    $dialogTitle = New-UiLabel (T "sessionPickerTitle") 24 14 500 38
+    $dialogTitle.Font = [System.Drawing.Font]::new("Microsoft YaHei UI", 15, [System.Drawing.FontStyle]::Bold)
+
+    $searchLabel = New-UiLabel (T "search") 24 56 100
     $searchBox = [System.Windows.Forms.TextBox]::new()
-    $searchBox.Location = [System.Drawing.Point]::new(20, 42)
-    $searchBox.Size = [System.Drawing.Size]::new(780, 28)
+    $searchBox.Location = [System.Drawing.Point]::new(24, 82)
+    $searchBox.Size = [System.Drawing.Size]::new(540, 28)
     $searchBox.Anchor = "Top, Left, Right"
+    $searchBox.AccessibleName = T "search"
     $list = [System.Windows.Forms.ListView]::new()
-    $list.Location = [System.Drawing.Point]::new(20, 82)
-    $list.Size = [System.Drawing.Size]::new(780, 342)
+    $list.Location = [System.Drawing.Point]::new(24, 122)
+    $list.Size = [System.Drawing.Size]::new(832, 362)
     $list.Anchor = "Top, Bottom, Left, Right"
     $list.View = "Details"
     $list.CheckBoxes = $true
     $list.FullRowSelect = $true
     $list.HideSelection = $false
-    $list.Columns.Add((T "titleColumn"), 340) | Out-Null
-    $list.Columns.Add((T "updatedColumn"), 155) | Out-Null
-    $list.Columns.Add((T "providerColumn"), 165) | Out-Null
+    $list.HeaderStyle = "Nonclickable"
+    $list.Columns.Add((T "titleColumn"), 370) | Out-Null
+    $list.Columns.Add((T "updatedColumn"), 160) | Out-Null
+    $list.Columns.Add((T "providerColumn"), 190) | Out-Null
     $list.Columns.Add((T "typeColumn"), 90) | Out-Null
 
     $selectedMap = @{}
@@ -567,37 +631,46 @@ function Show-SessionPicker {
         else { $script:SelectedSessionIds.Contains([string]$session.id) }
     }
 
-    $countLabel = New-UiLabel "" 20 438 230
-    $countLabel.Anchor = "Bottom, Left"
+    $countLabel = New-UiLabel "" 584 80 272 30
+    $countLabel.Anchor = "Top, Right"
+    $countLabel.TextAlign = "MiddleRight"
+    $countLabel.ForeColor = $script:Palette.MutedText
     $allButton = [System.Windows.Forms.Button]::new()
     $allButton.Text = T "selectAll"
-    $allButton.Location = [System.Drawing.Point]::new(258, 434)
-    $allButton.Size = [System.Drawing.Size]::new(88, 32)
+    $allButton.Location = [System.Drawing.Point]::new(24, 504)
+    $allButton.Size = [System.Drawing.Size]::new(92, 34)
     $allButton.Anchor = "Bottom, Left"
     $clearButton = [System.Windows.Forms.Button]::new()
     $clearButton.Text = T "clearAll"
-    $clearButton.Location = [System.Drawing.Point]::new(352, 434)
-    $clearButton.Size = [System.Drawing.Size]::new(78, 32)
+    $clearButton.Location = [System.Drawing.Point]::new(124, 504)
+    $clearButton.Size = [System.Drawing.Size]::new(84, 34)
     $clearButton.Anchor = "Bottom, Left"
     $cancelButton = [System.Windows.Forms.Button]::new()
     $cancelButton.Text = T "cancel"
     $cancelButton.DialogResult = "Cancel"
-    $cancelButton.Location = [System.Drawing.Point]::new(606, 434)
-    $cancelButton.Size = [System.Drawing.Size]::new(92, 32)
+    $cancelButton.Location = [System.Drawing.Point]::new(650, 504)
+    $cancelButton.Size = [System.Drawing.Size]::new(98, 34)
     $cancelButton.Anchor = "Bottom, Right"
     $okButton = [System.Windows.Forms.Button]::new()
     $okButton.Text = T "confirm"
-    $okButton.Location = [System.Drawing.Point]::new(708, 434)
-    $okButton.Size = [System.Drawing.Size]::new(92, 32)
+    $okButton.Location = [System.Drawing.Point]::new(758, 504)
+    $okButton.Size = [System.Drawing.Size]::new(98, 34)
     $okButton.Anchor = "Bottom, Right"
-    $okButton.BackColor = [System.Drawing.Color]::FromArgb(20, 103, 184)
+    $okButton.BackColor = $script:Palette.Accent
     $okButton.ForeColor = [System.Drawing.Color]::White
     $okButton.FlatStyle = "Flat"
     $okButton.FlatAppearance.BorderSize = 0
+    $okButton.FlatAppearance.MouseOverBackColor = $script:Palette.AccentHover
+    $okButton.UseVisualStyleBackColor = $false
+    Set-SegmentState $allButton $false
+    Set-SegmentState $clearButton $false
+    Set-SegmentState $cancelButton $false
 
     $updateCount = {
         $selectedCount = @($selectedMap.Values | Where-Object { $_ }).Count
         $countLabel.Text = Format-T "selectedCount" @($selectedCount, $sessions.Count)
+        $okButton.Enabled = $selectedCount -gt 0
+        $okButton.BackColor = if ($okButton.Enabled) { $script:Palette.Accent } else { [System.Drawing.Color]::FromArgb(173, 181, 191) }
     }
     $rebuild = {
         $filter = $searchBox.Text.Trim()
@@ -641,7 +714,7 @@ function Show-SessionPicker {
 
     $dialog.AcceptButton = $okButton
     $dialog.CancelButton = $cancelButton
-    $dialog.Controls.AddRange(@($searchLabel, $searchBox, $list, $countLabel, $allButton, $clearButton, $cancelButton, $okButton))
+    $dialog.Controls.AddRange(@($dialogTitle, $searchLabel, $searchBox, $countLabel, $list, $allButton, $clearButton, $cancelButton, $okButton))
     & $rebuild
     if ($dialog.ShowDialog($script:MainForm) -eq "OK") {
         $chosen = @($dialog.Tag)
@@ -771,7 +844,7 @@ function Handle-CoreLine {
         $script:ProgressBar.Value = $percent
         $script:PercentLabel.Text = "$percent%"
         $script:StatusLabel.Text = T $Matches.stage
-        $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(20, 103, 184)
+        $script:StatusLabel.ForeColor = $script:Palette.Accent
     }
     else { Write-UiLog $Line }
 }
@@ -792,12 +865,12 @@ function Complete-MigrationOperation {
         $script:ProgressBar.Value = 100
         $script:PercentLabel.Text = "100%"
         $script:StatusLabel.Text = T "completed"
-        $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(32, 128, 82)
+        $script:StatusLabel.ForeColor = $script:Palette.Success
         if ($script:SelectedMode -eq "Manage") { Reset-SessionSelection }
     }
     else {
         $script:StatusLabel.Text = T "failed"
-        $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(185, 46, 46)
+        $script:StatusLabel.ForeColor = $script:Palette.Danger
         if (-not $script:DetailsExpanded) { $script:DetailsExpanded = $true; Update-Layout }
     }
 }
@@ -808,7 +881,7 @@ function Start-MigrationOperation {
     $script:ProgressBar.Value = 0
     $script:PercentLabel.Text = "0%"
     $script:StatusLabel.Text = T "starting"
-    $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(20, 103, 184)
+    $script:StatusLabel.ForeColor = $script:Palette.Accent
     try {
         $script:SelectionFile = New-SelectionFile
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -834,7 +907,7 @@ function Start-MigrationOperation {
         Remove-SelectionFile
         Set-UiBusy $false
         $script:StatusLabel.Text = T "startFailed"
-        $script:StatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(185, 46, 46)
+        $script:StatusLabel.ForeColor = $script:Palette.Danger
         Write-UiLog $_.Exception.Message
         if (-not $script:DetailsExpanded) { $script:DetailsExpanded = $true; Update-Layout }
     }
@@ -850,124 +923,232 @@ if (-not (Test-Path -LiteralPath $script:CoreScriptPath -PathType Leaf)) {
 
 $script:MainForm = [System.Windows.Forms.Form]::new()
 $script:MainForm.StartPosition = "CenterScreen"
-$script:MainForm.ClientSize = [System.Drawing.Size]::new(800, 534)
-$script:MainForm.MinimumSize = [System.Drawing.Size]::new(760, 560)
-$script:MainForm.BackColor = [System.Drawing.Color]::FromArgb(248, 249, 251)
+$script:MainForm.ClientSize = [System.Drawing.Size]::new(920, 640)
+$script:MainForm.MinimumSize = [System.Drawing.Size]::new(880, 620)
+$script:MainForm.BackColor = $script:Palette.Surface
 $script:MainForm.Font = [System.Drawing.Font]::new("Microsoft YaHei UI", 9)
-$script:MainForm.AutoScaleMode = "None"
+$script:MainForm.AutoScaleMode = "Dpi"
 
-$script:TitleLabel = New-UiLabel "" 28 18 500 40
-$script:TitleLabel.Font = [System.Drawing.Font]::new("Microsoft YaHei UI", 17, [System.Drawing.FontStyle]::Bold)
-$script:ChineseButton = New-SegmentButton 676 22 48 30
-$script:EnglishButton = New-SegmentButton 724 22 48 30
-$script:ExportModeButton = New-SegmentButton 28 76 184
-$script:ImportModeButton = New-SegmentButton 212 76 184
-$script:ManageModeButton = New-SegmentButton 396 76 184
+$script:SidebarPanel = [System.Windows.Forms.Panel]::new()
+$script:SidebarPanel.Dock = "Left"
+$script:SidebarPanel.Size = [System.Drawing.Size]::new(192, 640)
+$script:SidebarPanel.BackColor = $script:Palette.Sidebar
+$script:SidebarBorder = [System.Windows.Forms.Panel]::new()
+$script:SidebarBorder.Dock = "Right"
+$script:SidebarBorder.Width = 1
+$script:SidebarBorder.BackColor = $script:Palette.Border
 
-$script:SourceLabel = New-UiLabel "" 28 130 240
+$script:TitleLabel = New-UiLabel "" 24 18 144 54
+$script:TitleLabel.Font = [System.Drawing.Font]::new("Microsoft YaHei UI", 13, [System.Drawing.FontStyle]::Bold)
+$script:TitleLabel.AutoEllipsis = $true
+$script:ExportModeButton = New-NavigationButton 96
+$script:ImportModeButton = New-NavigationButton 148
+$script:ManageModeButton = New-NavigationButton 200
+$script:ExportIndicator = [System.Windows.Forms.Panel]::new()
+$script:ExportIndicator.Location = [System.Drawing.Point]::new(16, 96)
+$script:ExportIndicator.Size = [System.Drawing.Size]::new(4, 44)
+$script:ExportIndicator.BackColor = $script:Palette.Accent
+$script:ImportIndicator = [System.Windows.Forms.Panel]::new()
+$script:ImportIndicator.Location = [System.Drawing.Point]::new(16, 148)
+$script:ImportIndicator.Size = [System.Drawing.Size]::new(4, 44)
+$script:ImportIndicator.BackColor = $script:Palette.Accent
+$script:ManageIndicator = [System.Windows.Forms.Panel]::new()
+$script:ManageIndicator.Location = [System.Drawing.Point]::new(16, 200)
+$script:ManageIndicator.Size = [System.Drawing.Size]::new(4, 44)
+$script:ManageIndicator.BackColor = $script:Palette.Accent
+$script:ChineseButton = New-SegmentButton 24 584 52 32
+$script:ChineseButton.Anchor = "Bottom, Left"
+$script:EnglishButton = New-SegmentButton 76 584 60 32
+$script:EnglishButton.Anchor = "Bottom, Left"
+$script:SidebarPanel.Controls.AddRange(@(
+    $script:SidebarBorder, $script:TitleLabel, $script:ExportModeButton, $script:ImportModeButton, $script:ManageModeButton,
+    $script:ExportIndicator, $script:ImportIndicator, $script:ManageIndicator, $script:ChineseButton, $script:EnglishButton
+))
+$script:ExportIndicator.BringToFront()
+$script:ImportIndicator.BringToFront()
+$script:ManageIndicator.BringToFront()
+
+$script:WorkspacePanel = [System.Windows.Forms.Panel]::new()
+$script:WorkspacePanel.Dock = "Fill"
+$script:WorkspacePanel.Size = [System.Drawing.Size]::new(728, 640)
+$script:WorkspacePanel.BackColor = $script:Palette.Surface
+
+$script:HeaderPanel = [System.Windows.Forms.Panel]::new()
+$script:HeaderPanel.Dock = "Top"
+$script:HeaderPanel.Size = [System.Drawing.Size]::new(728, 76)
+$script:HeaderPanel.BackColor = $script:Palette.Surface
+$script:HeaderBorder = [System.Windows.Forms.Panel]::new()
+$script:HeaderBorder.Dock = "Bottom"
+$script:HeaderBorder.Height = 1
+$script:HeaderBorder.BackColor = $script:Palette.Border
+$script:TaskTitleLabel = New-UiLabel "" 32 16 620 44
+$script:TaskTitleLabel.Font = [System.Drawing.Font]::new("Microsoft YaHei UI", 17, [System.Drawing.FontStyle]::Bold)
+$script:TaskTitleLabel.Anchor = "Top, Left, Right"
+$script:HeaderPanel.Controls.AddRange(@($script:HeaderBorder, $script:TaskTitleLabel))
+
+$script:BodyPanel = [System.Windows.Forms.Panel]::new()
+$script:BodyPanel.Dock = "Fill"
+$script:BodyPanel.Size = [System.Drawing.Size]::new(728, 422)
+$script:BodyPanel.BackColor = $script:Palette.Surface
+$script:BodyPanel.AutoScroll = $true
+$script:BodyPanel.AutoScrollMinSize = [System.Drawing.Size]::new(0, 414)
+
+$script:SourceLabel = New-UiLabel "" 32 18 240
 $script:SourceTextBox = [System.Windows.Forms.TextBox]::new()
-$script:SourceTextBox.Location = [System.Drawing.Point]::new(28, 156)
-$script:SourceTextBox.Size = [System.Drawing.Size]::new(680, 28)
+$script:SourceTextBox.Location = [System.Drawing.Point]::new(32, 46)
+$script:SourceTextBox.Size = [System.Drawing.Size]::new(612, 28)
 $script:SourceTextBox.Anchor = "Top, Left, Right"
-$script:SourceBrowseButton = New-SegmentButton 718 154 54 30
+$script:SourceBrowseButton = New-SegmentButton 652 44 44 30
 $script:SourceBrowseButton.Text = "..."
 $script:SourceBrowseButton.Anchor = "Top, Right"
 
-$script:SessionsLabel = New-UiLabel "" 28 202 180
-$script:SessionSummaryLabel = New-UiLabel "" 28 228 520 32
-$script:SessionSummaryLabel.ForeColor = [System.Drawing.Color]::FromArgb(76, 80, 86)
-$script:ChooseSessionsButton = New-SegmentButton 606 224 166 34
+$script:SessionsLabel = New-UiLabel "" 32 98 180
+$script:SessionSummaryLabel = New-UiLabel "" 32 124 468 34
+$script:SessionSummaryLabel.ForeColor = $script:Palette.MutedText
+$script:SessionSummaryLabel.Anchor = "Top, Left, Right"
+$script:ChooseSessionsButton = New-SegmentButton 520 122 176 34
 $script:ChooseSessionsButton.Anchor = "Top, Right"
 
-$script:ManagementActionLabel = New-UiLabel "" 28 274 240
-$script:SetProviderActionButton = New-SegmentButton 28 300 184
-$script:DeleteActionButton = New-SegmentButton 212 300 184
+$script:ManagementActionLabel = New-UiLabel "" 32 184 240
+$script:SetProviderActionButton = New-SegmentButton 32 210 176
+$script:DeleteActionButton = New-SegmentButton 208 210 176
 
-$script:DestinationLabel = New-UiLabel "" 28 274 240
+$script:DestinationLabel = New-UiLabel "" 32 184 240
 $script:DestinationTextBox = [System.Windows.Forms.TextBox]::new()
-$script:DestinationTextBox.Location = [System.Drawing.Point]::new(28, 300)
-$script:DestinationTextBox.Size = [System.Drawing.Size]::new(680, 28)
+$script:DestinationTextBox.Location = [System.Drawing.Point]::new(32, 210)
+$script:DestinationTextBox.Size = [System.Drawing.Size]::new(612, 28)
 $script:DestinationTextBox.Anchor = "Top, Left, Right"
-$script:DestinationBrowseButton = New-SegmentButton 718 298 54 30
+$script:DestinationBrowseButton = New-SegmentButton 652 208 44 30
 $script:DestinationBrowseButton.Text = "..."
 $script:DestinationBrowseButton.Anchor = "Top, Right"
 
 $script:AdvancedButton = [System.Windows.Forms.Button]::new()
-$script:AdvancedButton.Location = [System.Drawing.Point]::new(24, 340)
+$script:AdvancedButton.Location = [System.Drawing.Point]::new(28, 254)
 $script:AdvancedButton.Size = [System.Drawing.Size]::new(220, 30)
 $script:AdvancedButton.FlatStyle = "Flat"
 $script:AdvancedButton.FlatAppearance.BorderSize = 0
 $script:AdvancedButton.TextAlign = "MiddleLeft"
 $script:AdvancedButton.Cursor = "Hand"
+$script:AdvancedButton.ForeColor = $script:Palette.MutedText
 
 $script:AdvancedPanel = [System.Windows.Forms.Panel]::new()
-$script:AdvancedPanel.BackColor = [System.Drawing.Color]::FromArgb(242, 244, 247)
+$script:AdvancedPanel.Location = [System.Drawing.Point]::new(32, 292)
+$script:AdvancedPanel.Size = [System.Drawing.Size]::new(664, 108)
+$script:AdvancedPanel.Anchor = "Top, Left, Right"
+$script:AdvancedPanel.BackColor = $script:Palette.Background
 $script:ExportOptionsPanel = [System.Windows.Forms.Panel]::new()
 $script:ExportOptionsPanel.Dock = "Fill"
 $script:HistoryOnlyCheckBox = [System.Windows.Forms.CheckBox]::new()
-$script:HistoryOnlyCheckBox.Location = [System.Drawing.Point]::new(14, 14)
-$script:HistoryOnlyCheckBox.Size = [System.Drawing.Size]::new(300, 24)
+$script:HistoryOnlyCheckBox.Location = [System.Drawing.Point]::new(16, 14)
+$script:HistoryOnlyCheckBox.Size = [System.Drawing.Size]::new(620, 24)
 $script:IncludeArtifactsCheckBox = [System.Windows.Forms.CheckBox]::new()
-$script:IncludeArtifactsCheckBox.Location = [System.Drawing.Point]::new(330, 14)
-$script:IncludeArtifactsCheckBox.Size = [System.Drawing.Size]::new(390, 24)
+$script:IncludeArtifactsCheckBox.Location = [System.Drawing.Point]::new(16, 50)
+$script:IncludeArtifactsCheckBox.Size = [System.Drawing.Size]::new(620, 24)
 $script:ExportOptionsPanel.Controls.AddRange(@($script:HistoryOnlyCheckBox, $script:IncludeArtifactsCheckBox))
 
 $script:ImportOptionsPanel = [System.Windows.Forms.Panel]::new()
 $script:ImportOptionsPanel.Dock = "Fill"
 $script:RestoreAppStateCheckBox = [System.Windows.Forms.CheckBox]::new()
-$script:RestoreAppStateCheckBox.Location = [System.Drawing.Point]::new(14, 10)
-$script:RestoreAppStateCheckBox.Size = [System.Drawing.Size]::new(340, 26)
+$script:RestoreAppStateCheckBox.Location = [System.Drawing.Point]::new(16, 8)
+$script:RestoreAppStateCheckBox.Size = [System.Drawing.Size]::new(620, 26)
 $script:RewriteProviderCheckBox = [System.Windows.Forms.CheckBox]::new()
-$script:RewriteProviderCheckBox.Location = [System.Drawing.Point]::new(370, 10)
-$script:RewriteProviderCheckBox.Size = [System.Drawing.Size]::new(350, 26)
+$script:RewriteProviderCheckBox.Location = [System.Drawing.Point]::new(16, 42)
+$script:RewriteProviderCheckBox.Size = [System.Drawing.Size]::new(300, 26)
 $script:RewriteProviderCheckBox.Checked = $true
-$script:TargetProviderLabel = New-UiLabel "" 14 48 150
+$script:TargetProviderLabel = New-UiLabel "" 330 42 130
 $script:TargetProviderTextBox = [System.Windows.Forms.TextBox]::new()
-$script:TargetProviderTextBox.Location = [System.Drawing.Point]::new(170, 46)
-$script:TargetProviderTextBox.Size = [System.Drawing.Size]::new(330, 28)
+$script:TargetProviderTextBox.Location = [System.Drawing.Point]::new(462, 40)
+$script:TargetProviderTextBox.Size = [System.Drawing.Size]::new(184, 28)
+$script:TargetProviderTextBox.Anchor = "Top, Left, Right"
 $script:ImportOptionsPanel.Controls.AddRange(@($script:RestoreAppStateCheckBox, $script:RewriteProviderCheckBox, $script:TargetProviderLabel, $script:TargetProviderTextBox))
 $script:AdvancedPanel.Controls.AddRange(@($script:ExportOptionsPanel, $script:ImportOptionsPanel))
 
-$script:SafetyLabel = New-UiLabel "" 28 390 450 36
-$script:SafetyLabel.ForeColor = [System.Drawing.Color]::FromArgb(157, 79, 18)
+$script:BodyPanel.Controls.AddRange(@(
+    $script:SourceLabel, $script:SourceTextBox, $script:SourceBrowseButton, $script:SessionsLabel, $script:SessionSummaryLabel,
+    $script:ChooseSessionsButton, $script:ManagementActionLabel, $script:SetProviderActionButton, $script:DeleteActionButton,
+    $script:DestinationLabel, $script:DestinationTextBox, $script:DestinationBrowseButton, $script:AdvancedButton, $script:AdvancedPanel
+))
+
+$script:FooterPanel = [System.Windows.Forms.Panel]::new()
+$script:FooterPanel.Dock = "Bottom"
+$script:FooterPanel.Size = [System.Drawing.Size]::new(728, 142)
+$script:FooterPanel.BackColor = $script:Palette.Background
+$script:FooterBorder = [System.Windows.Forms.Panel]::new()
+$script:FooterBorder.Dock = "Top"
+$script:FooterBorder.Height = 1
+$script:FooterBorder.BackColor = $script:Palette.Border
+$script:SafetyLabel = New-UiLabel "" 32 12 454 42
+$script:SafetyLabel.ForeColor = $script:Palette.Warning
 $script:RunButton = [System.Windows.Forms.Button]::new()
-$script:RunButton.Size = [System.Drawing.Size]::new(166, 40)
+$script:RunButton.Location = [System.Drawing.Point]::new(520, 12)
+$script:RunButton.Size = [System.Drawing.Size]::new(176, 40)
 $script:RunButton.Anchor = "Top, Right"
-$script:RunButton.BackColor = [System.Drawing.Color]::FromArgb(20, 103, 184)
+$script:RunButton.BackColor = $script:Palette.Accent
 $script:RunButton.ForeColor = [System.Drawing.Color]::White
 $script:RunButton.FlatStyle = "Flat"
 $script:RunButton.FlatAppearance.BorderSize = 0
 $script:RunButton.Cursor = "Hand"
+$script:RunButton.UseVisualStyleBackColor = $false
 
-$script:StatusLabel = New-UiLabel "" 28 440 620
-$script:PercentLabel = New-UiLabel "0%" 708 440 64
+$script:StatusLabel = New-UiLabel "" 32 60 584
+$script:StatusLabel.Anchor = "Top, Left, Right"
+$script:PercentLabel = New-UiLabel "0%" 632 60 64
+$script:PercentLabel.Font = [System.Drawing.Font]::new("Consolas", 9)
 $script:PercentLabel.TextAlign = "MiddleRight"
+$script:PercentLabel.Anchor = "Top, Right"
 $script:ProgressBar = [System.Windows.Forms.ProgressBar]::new()
-$script:ProgressBar.Size = [System.Drawing.Size]::new(744, 8)
+$script:ProgressBar.Location = [System.Drawing.Point]::new(32, 87)
+$script:ProgressBar.Size = [System.Drawing.Size]::new(664, 8)
 $script:ProgressBar.Anchor = "Top, Left, Right"
 $script:ProgressBar.Style = "Blocks"
 $script:DetailsButton = [System.Windows.Forms.Button]::new()
+$script:DetailsButton.Location = [System.Drawing.Point]::new(28, 100)
 $script:DetailsButton.Size = [System.Drawing.Size]::new(180, 30)
 $script:DetailsButton.FlatStyle = "Flat"
 $script:DetailsButton.FlatAppearance.BorderSize = 0
 $script:DetailsButton.TextAlign = "MiddleLeft"
 $script:DetailsButton.Cursor = "Hand"
+$script:DetailsButton.ForeColor = $script:Palette.MutedText
 $script:LogTextBox = [System.Windows.Forms.TextBox]::new()
+$script:LogTextBox.Location = [System.Drawing.Point]::new(32, 136)
+$script:LogTextBox.Size = [System.Drawing.Size]::new(664, 150)
 $script:LogTextBox.Multiline = $true
 $script:LogTextBox.ReadOnly = $true
 $script:LogTextBox.ScrollBars = "Vertical"
-$script:LogTextBox.BackColor = [System.Drawing.Color]::White
+$script:LogTextBox.BackColor = $script:Palette.Surface
+$script:LogTextBox.BorderStyle = "FixedSingle"
 $script:LogTextBox.Font = [System.Drawing.Font]::new("Consolas", 9)
 $script:LogTextBox.Anchor = "Top, Bottom, Left, Right"
-
-$script:MainForm.Controls.AddRange(@(
-    $script:TitleLabel, $script:ChineseButton, $script:EnglishButton, $script:ExportModeButton, $script:ImportModeButton, $script:ManageModeButton,
-    $script:SourceLabel, $script:SourceTextBox, $script:SourceBrowseButton, $script:SessionsLabel, $script:SessionSummaryLabel,
-    $script:ChooseSessionsButton, $script:ManagementActionLabel, $script:SetProviderActionButton, $script:DeleteActionButton,
-    $script:DestinationLabel, $script:DestinationTextBox, $script:DestinationBrowseButton,
-    $script:AdvancedButton, $script:AdvancedPanel, $script:SafetyLabel, $script:RunButton, $script:StatusLabel,
-    $script:PercentLabel, $script:ProgressBar, $script:DetailsButton, $script:LogTextBox
+$script:FooterPanel.Controls.AddRange(@(
+    $script:FooterBorder, $script:SafetyLabel, $script:RunButton, $script:StatusLabel, $script:PercentLabel,
+    $script:ProgressBar, $script:DetailsButton, $script:LogTextBox
 ))
+
+$script:WorkspacePanel.Controls.Add($script:BodyPanel)
+$script:WorkspacePanel.Controls.Add($script:FooterPanel)
+$script:WorkspacePanel.Controls.Add($script:HeaderPanel)
+$script:MainForm.Controls.Add($script:WorkspacePanel)
+$script:MainForm.Controls.Add($script:SidebarPanel)
+
+Set-SegmentState $script:SourceBrowseButton $false
+Set-SegmentState $script:DestinationBrowseButton $false
+Set-SegmentState $script:ChooseSessionsButton $false
+
+$script:ExportModeButton.TabIndex = 0
+$script:ImportModeButton.TabIndex = 1
+$script:ManageModeButton.TabIndex = 2
+$script:ChineseButton.TabIndex = 3
+$script:EnglishButton.TabIndex = 4
+$script:SourceTextBox.TabIndex = 10
+$script:SourceBrowseButton.TabIndex = 11
+$script:ChooseSessionsButton.TabIndex = 12
+$script:SetProviderActionButton.TabIndex = 13
+$script:DeleteActionButton.TabIndex = 14
+$script:DestinationTextBox.TabIndex = 15
+$script:DestinationBrowseButton.TabIndex = 16
+$script:AdvancedButton.TabIndex = 17
+$script:RunButton.TabIndex = 30
+$script:DetailsButton.TabIndex = 31
 
 $script:ToolTip = [System.Windows.Forms.ToolTip]::new()
 $script:ProcessTimer = [System.Windows.Forms.Timer]::new()
@@ -1052,3 +1233,5 @@ Remove-SelectionFile
 $script:ProcessTimer.Dispose()
 $script:ToolTip.Dispose()
 $script:MainForm.Dispose()
+$script:NavigationFont.Dispose()
+$script:NavigationActiveFont.Dispose()
