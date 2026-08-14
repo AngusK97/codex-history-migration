@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet("Export", "Import", "Inspect")]
+    [ValidateSet("Export", "Import", "Inspect", "List")]
     [string]$Mode,
 
     [string]$ArchivePath = "",
@@ -19,6 +19,8 @@ param(
 
     [string]$TargetModelProvider = "",
 
+    [string]$SessionSelectionFile = "",
+
     [switch]$AllowRunningCodex,
 
     [switch]$Force
@@ -29,7 +31,7 @@ $ErrorActionPreference = "Stop"
 
 # 工具和归档格式版本用于拒绝不兼容的迁移包。
 $script:ToolName = "CodexHistoryMigration"
-$script:ToolVersion = "1.0.1"
+$script:ToolVersion = "1.1.0"
 $script:SchemaVersion = 1
 $script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $script:SensitiveTopLevelNames = @(
@@ -42,6 +44,45 @@ $script:SensitiveTopLevelNames = @(
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+# 向 GUI 输出稳定、可解析的确定型进度事件。
+function Write-ProgressEvent {
+    param(
+        [Parameter(Mandatory = $true)][ValidateRange(0, 100)][int]$Percent,
+        [Parameter(Mandatory = $true)][string]$Stage
+    )
+
+    Write-Host ("progress`tpercent={0}`tstage={1}" -f $Percent, $Stage)
+}
+
+# 从 UTF-8 文本读取会话 ID；每行一个 ID，并拒绝空选择与重复之外的异常内容。
+function Read-SessionSelection {
+    param([AllowEmptyString()][string]$SelectionFile)
+
+    if ([string]::IsNullOrWhiteSpace($SelectionFile)) {
+        return $null
+    }
+
+    $resolved = Resolve-FullPath -PathValue $SelectionFile
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+        throw "Session selection file does not exist: $resolved"
+    }
+
+    $ids = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in [System.IO.File]::ReadAllLines($resolved, [System.Text.Encoding]::UTF8)) {
+        $id = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        if ($id.Length -gt 128 -or $id -match '[\x00-\x1f\x7f]') {
+            throw "Session selection contains an invalid id."
+        }
+        $ids.Add($id) | Out-Null
+    }
+    if ($ids.Count -eq 0) {
+        throw "Select at least one session."
+    }
+
+    return $ids
+}
 
 # 返回不要求目标已经存在的绝对路径。
 function Resolve-FullPath {
@@ -330,7 +371,8 @@ function Copy-SourceDirectoryToStage {
         [Parameter(Mandatory = $true)][string]$DataRoot,
         [Parameter(Mandatory = $true)][string]$Category,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.HashSet[string]]$SeenPaths,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Entries
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Entries,
+        [AllowNull()][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
     )
 
     if (-not (Test-Path -LiteralPath $SourceDirectory -PathType Container)) {
@@ -340,10 +382,48 @@ function Copy-SourceDirectoryToStage {
     foreach ($item in Get-ChildItem -LiteralPath $SourceDirectory -Recurse -Force) {
         Assert-PathWithinRootWithoutReparsePoint -Root $SourceRoot -PathValue $item.FullName -Operation "Export source"
         if (-not $item.PSIsContainer) {
+            if ($null -ne $SelectedSessionIds) {
+                $sessionId = Get-HistorySessionId -SourceFile $item.FullName
+                if ([string]::IsNullOrWhiteSpace($sessionId) -or -not $SelectedSessionIds.Contains($sessionId)) {
+                    continue
+                }
+            }
             Copy-SourceFileToStage -SourceFile $item.FullName -SourceRoot $SourceRoot -DataRoot $DataRoot `
                 -Category $Category -SeenPaths $SeenPaths -Entries $Entries
         }
     }
+}
+
+# 写入只包含指定会话的标题索引。
+function Copy-FilteredSessionIndexToStage {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [Parameter(Mandatory = $true)][string]$DataRoot,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.HashSet[string]]$SelectedSessionIds,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.HashSet[string]]$SeenPaths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Entries
+    )
+
+    $sourceIndex = Join-Path $SourceRoot "session_index.jsonl"
+    if (-not (Test-Path -LiteralPath $sourceIndex -PathType Leaf)) { return }
+
+    $destination = Join-Path $DataRoot "session_index.jsonl"
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in [System.IO.File]::ReadAllLines($sourceIndex, [System.Text.Encoding]::UTF8)) {
+        try { $id = [string](($line | ConvertFrom-Json).id) } catch { $id = "" }
+        if (-not [string]::IsNullOrWhiteSpace($id) -and $SelectedSessionIds.Contains($id)) {
+            $lines.Add($line)
+        }
+    }
+    Write-LinesAtomically -Destination $destination -Lines @($lines)
+    $file = Get-Item -LiteralPath $destination
+    $SeenPaths.Add("session_index.jsonl") | Out-Null
+    $Entries.Add([PSCustomObject]@{
+        path = "session_index.jsonl"
+        category = "historyIndex"
+        size = [Int64]$file.Length
+        sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+    })
 }
 
 # 收集受支持的历史、界面状态与可选聊天产物。
@@ -352,7 +432,8 @@ function Copy-CodexDataToStage {
         [Parameter(Mandatory = $true)][string]$SourceRoot,
         [Parameter(Mandatory = $true)][string]$DataRoot,
         [Parameter(Mandatory = $true)][bool]$IncludeAppState,
-        [Parameter(Mandatory = $true)][bool]$IncludeChatArtifacts
+        [Parameter(Mandatory = $true)][bool]$IncludeChatArtifacts,
+        [AllowNull()][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
     )
 
     $seenPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -360,18 +441,23 @@ function Copy-CodexDataToStage {
 
     foreach ($directoryName in @("sessions", "archived_sessions")) {
         Copy-SourceDirectoryToStage -SourceDirectory (Join-Path $SourceRoot $directoryName) -SourceRoot $SourceRoot `
-            -DataRoot $DataRoot -Category "history" -SeenPaths $seenPaths -Entries $entries
+            -DataRoot $DataRoot -Category "history" -SeenPaths $seenPaths -Entries $entries `
+            -SelectedSessionIds $SelectedSessionIds
     }
 
     $sessionIndex = Join-Path $SourceRoot "session_index.jsonl"
-    if (Test-Path -LiteralPath $sessionIndex -PathType Leaf) {
+    if ($null -ne $SelectedSessionIds) {
+        Copy-FilteredSessionIndexToStage -SourceRoot $SourceRoot -DataRoot $DataRoot `
+            -SelectedSessionIds $SelectedSessionIds -SeenPaths $seenPaths -Entries $entries
+    }
+    elseif (Test-Path -LiteralPath $sessionIndex -PathType Leaf) {
         Copy-SourceFileToStage -SourceFile $sessionIndex -SourceRoot $SourceRoot -DataRoot $DataRoot `
             -Category "historyIndex" -SeenPaths $seenPaths -Entries $entries
     }
 
     if ($IncludeAppState) {
         $globalState = Join-Path $SourceRoot ".codex-global-state.json"
-        if (Test-Path -LiteralPath $globalState -PathType Leaf) {
+        if ($null -eq $SelectedSessionIds -and (Test-Path -LiteralPath $globalState -PathType Leaf)) {
             Copy-SourceFileToStage -SourceFile $globalState -SourceRoot $SourceRoot -DataRoot $DataRoot `
                 -Category "appState" -SeenPaths $seenPaths -Entries $entries
         }
@@ -390,11 +476,15 @@ function Copy-CodexDataToStage {
         }
     }
 
-    if ($IncludeChatArtifacts) {
+    if ($IncludeChatArtifacts -and $null -eq $SelectedSessionIds) {
         foreach ($directoryName in @("generated_images", "visualizations")) {
             Copy-SourceDirectoryToStage -SourceDirectory (Join-Path $SourceRoot $directoryName) -SourceRoot $SourceRoot `
-                -DataRoot $DataRoot -Category "artifact" -SeenPaths $seenPaths -Entries $entries
+                -DataRoot $DataRoot -Category "artifact" -SeenPaths $seenPaths -Entries $entries -SelectedSessionIds $null
         }
+    }
+
+    if ($null -ne $SelectedSessionIds -and $IncludeAppState) {
+        Filter-StagedThreadIndexes -DataRoot $DataRoot -SelectedSessionIds $SelectedSessionIds -Entries $entries
     }
 
     return @($entries)
@@ -407,7 +497,9 @@ function New-HistoryArchive {
         [Parameter(Mandatory = $true)][string]$DestinationArchive,
         [Parameter(Mandatory = $true)][bool]$IncludeAppState,
         [Parameter(Mandatory = $true)][bool]$IncludeChatArtifacts,
-        [Parameter(Mandatory = $true)][bool]$AllowOverwrite
+        [Parameter(Mandatory = $true)][bool]$AllowOverwrite,
+        [AllowNull()][System.Collections.Generic.HashSet[string]]$SelectedSessionIds,
+        [bool]$EmitProgress = $true
     )
 
     if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
@@ -438,14 +530,31 @@ function New-HistoryArchive {
         $dataRoot = Join-Path $packageRoot "data"
         [System.IO.Directory]::CreateDirectory($dataRoot) | Out-Null
 
+        if ($EmitProgress) { Write-ProgressEvent -Percent 12 -Stage "ScanningSessions" }
         $entries = @(Copy-CodexDataToStage -SourceRoot $SourceRoot -DataRoot $dataRoot `
-            -IncludeAppState $IncludeAppState -IncludeChatArtifacts $IncludeChatArtifacts)
+            -IncludeAppState $IncludeAppState -IncludeChatArtifacts $IncludeChatArtifacts `
+            -SelectedSessionIds $SelectedSessionIds)
         if ($entries.Count -eq 0) {
             throw "No supported Codex history files were found in: $SourceRoot"
         }
 
+        if ($null -ne $SelectedSessionIds) {
+            $exportedIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($entry in @($entries | Where-Object { $_.category -eq "history" })) {
+                $sessionFile = Join-Path $dataRoot ([string]$entry.path).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+                $sessionId = Get-HistorySessionId -SourceFile $sessionFile
+                if (-not [string]::IsNullOrWhiteSpace($sessionId)) { $exportedIds.Add($sessionId) | Out-Null }
+            }
+            foreach ($selectedId in $SelectedSessionIds) {
+                if (-not $exportedIds.Contains($selectedId)) {
+                    throw "Selected session was not found in the Codex data folder: $selectedId"
+                }
+            }
+        }
+
         $sessionCount = @($entries | Where-Object { $_.path -like "sessions/*.jsonl" }).Count
         $archivedSessionCount = @($entries | Where-Object { $_.path -like "archived_sessions/*.jsonl" }).Count
+        if ($EmitProgress) { Write-ProgressEvent -Percent 70 -Stage "CreatingManifest" }
         $manifest = [ordered]@{
             schemaVersion = $script:SchemaVersion
             tool = $script:ToolName
@@ -453,7 +562,8 @@ function New-HistoryArchive {
             createdAtUtc = [DateTime]::UtcNow.ToString("o")
             sourcePlatform = [Environment]::OSVersion.Platform.ToString()
             includesAppState = $IncludeAppState
-            includesArtifacts = $IncludeChatArtifacts
+            includesArtifacts = ($IncludeChatArtifacts -and $null -eq $SelectedSessionIds)
+            isPartialHistory = ($null -ne $SelectedSessionIds)
             sessionCount = $sessionCount
             archivedSessionCount = $archivedSessionCount
             fileCount = $entries.Count
@@ -462,6 +572,7 @@ function New-HistoryArchive {
 
         $manifestPath = Join-Path $packageRoot "manifest.json"
         [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 8), $script:Utf8NoBom)
+        if ($EmitProgress) { Write-ProgressEvent -Percent 84 -Stage "CompressingArchive" }
         [System.IO.Compression.ZipFile]::CreateFromDirectory(
             $packageRoot,
             $DestinationArchive,
@@ -734,7 +845,13 @@ function New-ProviderRewrittenSessionFile {
 function Get-HistorySessionId {
     param([Parameter(Mandatory = $true)][string]$SourceFile)
 
-    $reader = [System.IO.StreamReader]::new($SourceFile, [System.Text.Encoding]::UTF8, $true)
+    $stream = [System.IO.FileStream]::new(
+        $SourceFile,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    )
+    $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true)
     try {
         while (-not $reader.EndOfStream) {
             try {
@@ -754,6 +871,70 @@ function Get-HistorySessionId {
     }
 
     return ""
+}
+
+# 生成 GUI 会话选择器需要的轻量目录，标题优先来自 session_index.jsonl。
+function Get-SessionCatalog {
+    param([Parameter(Mandatory = $true)][string]$DataRoot)
+
+    $indexById = @{}
+    $indexPath = Join-Path $DataRoot "session_index.jsonl"
+    if (Test-Path -LiteralPath $indexPath -PathType Leaf) {
+        foreach ($line in [System.IO.File]::ReadAllLines($indexPath, [System.Text.Encoding]::UTF8)) {
+            try {
+                $record = $line | ConvertFrom-Json
+                $id = [string]$record.id
+                if (-not [string]::IsNullOrWhiteSpace($id)) { $indexById[$id] = $record }
+            }
+            catch { }
+        }
+    }
+
+    $sessions = [System.Collections.Generic.List[object]]::new()
+    foreach ($directoryName in @("sessions", "archived_sessions")) {
+        $directory = Join-Path $DataRoot $directoryName
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
+        foreach ($file in Get-ChildItem -LiteralPath $directory -Recurse -File -Filter "*.jsonl") {
+            $id = Get-HistorySessionId -SourceFile $file.FullName
+            if ([string]::IsNullOrWhiteSpace($id)) { continue }
+            $indexRecord = if ($indexById.ContainsKey($id)) { $indexById[$id] } else { $null }
+            $titleProperty = if ($null -ne $indexRecord) { $indexRecord.PSObject.Properties["title"] } else { $null }
+            if ($null -eq $titleProperty -and $null -ne $indexRecord) {
+                $titleProperty = $indexRecord.PSObject.Properties["thread_name"]
+            }
+            $updatedProperty = if ($null -ne $indexRecord) { $indexRecord.PSObject.Properties["updated_at"] } else { $null }
+            $title = if ($null -ne $titleProperty -and -not [string]::IsNullOrWhiteSpace([string]$titleProperty.Value)) {
+                [string]$titleProperty.Value
+            }
+            else { $id }
+            $updatedAt = if ($null -ne $updatedProperty -and -not [string]::IsNullOrWhiteSpace([string]$updatedProperty.Value)) {
+                [string]$updatedProperty.Value
+            }
+            else { $file.LastWriteTimeUtc.ToString("o") }
+            $sessions.Add([PSCustomObject]@{
+                id = $id
+                title = $title
+                updatedAt = $updatedAt
+                archived = ($directoryName -eq "archived_sessions")
+                path = (Get-RelativePath -BasePath $DataRoot -TargetPath $file.FullName).Replace('\', '/')
+            })
+        }
+    }
+    return @($sessions | Sort-Object updatedAt -Descending)
+}
+
+function Get-ArchiveSessionCatalog {
+    param([Parameter(Mandatory = $true)][string]$SourceArchive)
+
+    $validation = Expand-AndValidateArchive -SourceArchive $SourceArchive
+    try {
+        $partialProperty = $validation.Manifest.PSObject.Properties["isPartialHistory"]
+        return [PSCustomObject]@{
+            Sessions = @(Get-SessionCatalog -DataRoot $validation.DataRoot)
+            IsPartialHistory = ($null -ne $partialProperty -and [bool]$partialProperty.Value)
+        }
+    }
+    finally { Remove-SafeTemporaryDirectory -PathValue $validation.TemporaryRoot }
 }
 
 # 加载 Windows 自带 SQLite 接口，用于同步桌面端线程索引中的 provider。
@@ -869,6 +1050,68 @@ public static class CodexHistorySqlite
         {
             sqlite3_close(database);
         }
+    }
+
+    // 将暂存数据库裁剪为指定会话，避免部分备份泄露其他线程标题和路径。
+    public static int FilterThreads(string databasePath, string[] sessionIds)
+    {
+        IntPtr database;
+        int result = Open(databasePath, out database);
+        if (result != SqliteOk)
+        {
+            throw new InvalidOperationException("Cannot open SQLite database: " + databasePath);
+        }
+
+        bool transactionStarted = false;
+        IntPtr statement = IntPtr.Zero;
+        try
+        {
+            sqlite3_busy_timeout(database, 5000);
+            Execute(database, "BEGIN IMMEDIATE");
+            transactionStarted = true;
+            Execute(database, "CREATE TEMP TABLE codex_history_selected_ids (id TEXT PRIMARY KEY)");
+            result = Prepare(database, "INSERT OR IGNORE INTO temp.codex_history_selected_ids (id) VALUES (?1)", -1, out statement, IntPtr.Zero);
+            EnsureSuccess(database, result, "prepare selected session insert");
+            foreach (string sessionId in sessionIds)
+            {
+                EnsureSuccess(database, BindText(statement, 1, sessionId, -1, SqliteTransient), "bind selected session id");
+                result = sqlite3_step(statement);
+                if (result != SqliteDone)
+                {
+                    throw new InvalidOperationException("SQLite selected session insert failed: " + GetError(database));
+                }
+                sqlite3_reset(statement);
+                sqlite3_clear_bindings(statement);
+            }
+            sqlite3_finalize(statement);
+            statement = IntPtr.Zero;
+            Execute(database, "DELETE FROM main.threads WHERE id NOT IN (SELECT id FROM temp.codex_history_selected_ids)");
+            int deletedRows = sqlite3_changes(database);
+            if (TableExists(database, "thread_dynamic_tools"))
+            {
+                Execute(database, "DELETE FROM main.thread_dynamic_tools WHERE thread_id NOT IN (SELECT id FROM temp.codex_history_selected_ids)");
+            }
+            if (TableExists(database, "thread_spawn_edges"))
+            {
+                Execute(database, "DELETE FROM main.thread_spawn_edges WHERE parent_thread_id NOT IN " +
+                    "(SELECT id FROM temp.codex_history_selected_ids) OR child_thread_id NOT IN " +
+                    "(SELECT id FROM temp.codex_history_selected_ids)");
+            }
+            Execute(database, "COMMIT");
+            transactionStarted = false;
+            Execute(database, "PRAGMA wal_checkpoint(TRUNCATE)");
+            return deletedRows;
+        }
+        catch
+        {
+            if (statement != IntPtr.Zero) sqlite3_finalize(statement);
+            if (transactionStarted)
+            {
+                try { Execute(database, "ROLLBACK"); } catch { }
+            }
+            throw;
+        }
+        finally { sqlite3_close(database); }
     }
 
     // 合并来源线程索引；只有整体恢复来源状态时才允许更新已存在的映射行。
@@ -1020,6 +1263,19 @@ public static class CodexHistorySqlite
         }
     }
 
+    private static bool TableExists(IntPtr database, string tableName)
+    {
+        IntPtr statement;
+        int result = Prepare(database, "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?1", -1, out statement, IntPtr.Zero);
+        EnsureSuccess(database, result, "prepare table lookup");
+        try
+        {
+            EnsureSuccess(database, BindText(statement, 1, tableName, -1, SqliteTransient), "bind table name");
+            return sqlite3_step(statement) == SqliteRow;
+        }
+        finally { sqlite3_finalize(statement); }
+    }
+
     private static string ReadThreadColumnSignature(IntPtr database, string schema)
     {
         IntPtr statement;
@@ -1066,6 +1322,42 @@ public static class CodexHistorySqlite
     }
 }
 '@
+}
+
+# 裁剪暂存的 SQLite 线程索引，并刷新清单中的哈希和大小。
+function Filter-StagedThreadIndexes {
+    param(
+        [Parameter(Mandatory = $true)][string]$DataRoot,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.HashSet[string]]$SelectedSessionIds,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Entries
+    )
+
+    Initialize-SqliteProviderUpdater
+    $sessionIds = @($SelectedSessionIds | Sort-Object)
+    foreach ($entry in @($Entries | Where-Object { $_.category -eq "appState" -and $_.path -like "*.sqlite" })) {
+        $databasePath = Join-Path $DataRoot ([string]$entry.path).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+        try {
+            [CodexHistorySqlite]::FilterThreads($databasePath, $sessionIds) | Out-Null
+            foreach ($suffix in @("-wal", "-shm")) {
+                $sidecar = $databasePath + $suffix
+                if (Test-Path -LiteralPath $sidecar -PathType Leaf) { [System.IO.File]::Delete($sidecar) }
+            }
+            $file = Get-Item -LiteralPath $databasePath
+            $entry.size = [Int64]$file.Length
+            $entry.sha256 = (Get-FileHash -LiteralPath $databasePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        catch {
+            throw "Could not filter desktop thread index $($entry.path): $($_.Exception.Message)"
+        }
+    }
+
+    for ($index = $Entries.Count - 1; $index -ge 0; $index--) {
+        if ($Entries[$index].category -eq "appState" -and (
+            ([string]$Entries[$index].path).EndsWith("-wal", [System.StringComparison]::OrdinalIgnoreCase) -or
+            ([string]$Entries[$index].path).EndsWith("-shm", [System.StringComparison]::OrdinalIgnoreCase))) {
+            $Entries.RemoveAt($index)
+        }
+    }
 }
 
 # 同步目标端现有 SQLite 索引中已经存在的迁入会话。
@@ -1176,7 +1468,8 @@ function Merge-ImportedThreadIndexes {
 function Merge-SessionIndex {
     param(
         [Parameter(Mandatory = $true)][string]$SourceIndex,
-        [Parameter(Mandatory = $true)][string]$DestinationIndex
+        [Parameter(Mandatory = $true)][string]$DestinationIndex,
+        [AllowNull()][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
     )
 
     if (-not (Test-Path -LiteralPath $SourceIndex -PathType Leaf)) {
@@ -1216,6 +1509,11 @@ function Merge-SessionIndex {
         }
         catch {
             # 无法解析的来源行仍会保留，但不能参与 ID 去重。
+        }
+
+        if ($null -ne $SelectedSessionIds -and
+            ([string]::IsNullOrWhiteSpace($id) -or -not $SelectedSessionIds.Contains($id))) {
+            continue
         }
 
         if ([string]::IsNullOrWhiteSpace($id) -or $knownIds.Add($id)) {
@@ -1270,11 +1568,23 @@ function Import-HistoryArchive {
         [Parameter(Mandatory = $true)][string]$TargetRoot,
         [Parameter(Mandatory = $true)][bool]$ForceAppStateRestore,
         [Parameter(Mandatory = $true)][bool]$RemapModelProvider,
-        [AllowEmptyString()][string]$RequestedModelProvider
+        [AllowEmptyString()][string]$RequestedModelProvider,
+        [AllowNull()][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
     )
 
+    if ($ForceAppStateRestore -and $null -ne $SelectedSessionIds) {
+        throw "A partial session restore cannot overwrite the complete local desktop state. Select all sessions or turn off -RestoreAppState."
+    }
+
+    Write-ProgressEvent -Percent 5 -Stage "ValidatingArchive"
     $validation = Expand-AndValidateArchive -SourceArchive $SourceArchive
     try {
+        $partialProperty = $validation.Manifest.PSObject.Properties["isPartialHistory"]
+        $archiveIsPartial = $null -ne $partialProperty -and [bool]$partialProperty.Value
+        if ($ForceAppStateRestore -and $archiveIsPartial) {
+            throw "A partial history archive cannot overwrite the complete local desktop state. Use merge restore instead."
+        }
+        Write-ProgressEvent -Percent 32 -Stage "PreparingSessions"
         $resolvedModelProvider = ""
         $providerRecordsRewritten = 0
         $providerRecordsSkipped = 0
@@ -1293,6 +1603,10 @@ function Import-HistoryArchive {
                 $rewrittenFile = Join-Path $rewriteRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
                 $rewrite = New-ProviderRewrittenSessionFile -SourceFile $sourceFile -DestinationFile $rewrittenFile `
                     -Provider $resolvedModelProvider
+                if ($null -ne $SelectedSessionIds -and
+                    ([string]::IsNullOrWhiteSpace($rewrite.SessionId) -or -not $SelectedSessionIds.Contains([string]$rewrite.SessionId))) {
+                    continue
+                }
                 if (-not [string]::IsNullOrWhiteSpace($rewrite.SessionId)) {
                     $sessionIdsByRelativePath[$relativePath] = [string]$rewrite.SessionId
                 }
@@ -1313,8 +1627,20 @@ function Import-HistoryArchive {
 
                 $sourceFile = Join-Path $validation.DataRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
                 $sessionId = Get-HistorySessionId -SourceFile $sourceFile
+                if ($null -ne $SelectedSessionIds -and
+                    ([string]::IsNullOrWhiteSpace($sessionId) -or -not $SelectedSessionIds.Contains($sessionId))) {
+                    continue
+                }
                 if (-not [string]::IsNullOrWhiteSpace($sessionId)) {
                     $sessionIdsByRelativePath[$relativePath] = $sessionId
+                }
+            }
+        }
+
+        if ($null -ne $SelectedSessionIds) {
+            foreach ($selectedId in $SelectedSessionIds) {
+                if (-not ($sessionIdsByRelativePath.Values -contains $selectedId)) {
+                    throw "Selected session was not found in the archive: $selectedId"
                 }
             }
         }
@@ -1327,6 +1653,7 @@ function Import-HistoryArchive {
         $hadHistory = Test-HasExistingHistory -TargetRoot $TargetRoot
         $backupPath = ""
         if (Test-HasMigratableData -TargetRoot $TargetRoot) {
+            Write-ProgressEvent -Percent 40 -Stage "CreatingRollbackBackup"
             $backupDirectory = Join-Path (Split-Path -Parent $TargetRoot) "codex-history-backups"
             [System.IO.Directory]::CreateDirectory($backupDirectory) | Out-Null
             $backupRoot = Split-Path -Parent $TargetRoot
@@ -1334,21 +1661,33 @@ function Import-HistoryArchive {
             $backupName = "codex-history-before-import-{0}-{1}.zip" -f [DateTime]::Now.ToString("yyyyMMdd-HHmmss"), [Guid]::NewGuid().ToString("N").Substring(0, 8)
             $backupPath = Join-Path $backupDirectory $backupName
             New-HistoryArchive -SourceRoot $TargetRoot -DestinationArchive $backupPath -IncludeAppState $true `
-                -IncludeChatArtifacts $false -AllowOverwrite $false | Out-Null
+                -IncludeChatArtifacts $false -AllowOverwrite $false -EmitProgress $false | Out-Null
         }
 
         $copied = 0
         $unchanged = 0
         $conflicts = 0
         $appStateRestored = 0
-        $restoreAppStateNow = $ForceAppStateRestore -or (-not $hadHistory)
+        $restoreAppStateNow = ($ForceAppStateRestore -or (-not $hadHistory)) -and $null -eq $SelectedSessionIds
         $importedSessionIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $importedSessionPaths = @{}
 
-        foreach ($entry in @($validation.Manifest.files)) {
+        $manifestEntries = @($validation.Manifest.files)
+        $processedEntries = 0
+        foreach ($entry in $manifestEntries) {
             $relativePath = ([string]$entry.path).Replace('\', '/')
             $category = [string]$entry.category
+            $processedEntries++
+            $copyPercent = 48 + [Math]::Floor(($processedEntries / [Math]::Max(1, $manifestEntries.Count)) * 34)
+            Write-ProgressEvent -Percent ([int]$copyPercent) -Stage "RestoringFiles"
             if ($category -eq "historyIndex") {
+                continue
+            }
+            if ($null -ne $SelectedSessionIds -and $category -eq "artifact") {
+                continue
+            }
+            if ($category -eq "history" -and
+                (-not $sessionIdsByRelativePath.ContainsKey($relativePath))) {
                 continue
             }
             if ($category -eq "appState" -and -not $restoreAppStateNow) {
@@ -1387,7 +1726,9 @@ function Import-HistoryArchive {
         $sourceIndex = Join-Path $validation.DataRoot "session_index.jsonl"
         $destinationIndex = Join-Path $TargetRoot "session_index.jsonl"
         Assert-PathWithinRootWithoutReparsePoint -Root $TargetRoot -PathValue $destinationIndex -Operation "Import destination"
-        $indexEntriesAdded = Merge-SessionIndex -SourceIndex $sourceIndex -DestinationIndex $destinationIndex
+        Write-ProgressEvent -Percent 86 -Stage "MergingIndexes"
+        $indexEntriesAdded = Merge-SessionIndex -SourceIndex $sourceIndex -DestinationIndex $destinationIndex `
+            -SelectedSessionIds $SelectedSessionIds
         $threadIndexRowsAdded = Merge-ImportedThreadIndexes -SourceRoot $validation.DataRoot -TargetRoot $TargetRoot `
             -SessionPaths $importedSessionPaths -Provider $resolvedModelProvider `
             -UpdateExistingMappings:$restoreAppStateNow
@@ -1443,6 +1784,7 @@ function Inspect-HistoryArchive {
 }
 
 try {
+    $selectedSessionIds = Read-SessionSelection -SelectionFile $SessionSelectionFile
     $resolvedCodexHome = if ([string]::IsNullOrWhiteSpace($CodexHome)) {
         Get-DefaultCodexHome
     }
@@ -1452,6 +1794,7 @@ try {
 
     switch ($Mode) {
         "Export" {
+            Write-ProgressEvent -Percent 0 -Stage "PreparingExport"
             Assert-CodexStopped -AllowRunning:$AllowRunningCodex
             if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
                 $ArchivePath = Join-Path (Get-Location).Path ("codex-history-{0}.zip" -f [DateTime]::Now.ToString("yyyyMMdd-HHmmss"))
@@ -1459,11 +1802,14 @@ try {
 
             $resolvedArchive = Resolve-FullPath -PathValue $ArchivePath
             $result = New-HistoryArchive -SourceRoot $resolvedCodexHome -DestinationArchive $resolvedArchive `
-                -IncludeAppState:(-not $HistoryOnly) -IncludeChatArtifacts:$IncludeArtifacts -AllowOverwrite:$Force
+                -IncludeAppState:(-not $HistoryOnly) -IncludeChatArtifacts:$IncludeArtifacts -AllowOverwrite:$Force `
+                -SelectedSessionIds $selectedSessionIds
+            Write-ProgressEvent -Percent 100 -Stage "Complete"
             Write-Host ("export complete`tarchive={0}`tfiles={1}`tsessions={2}`tarchived={3}`tbytes={4}" -f `
                 $result.ArchivePath, $result.FileCount, $result.SessionCount, $result.ArchivedSessionCount, $result.ArchiveBytes)
         }
         "Import" {
+            Write-ProgressEvent -Percent 0 -Stage "PreparingRestore"
             Assert-CodexStopped -AllowRunning:$AllowRunningCodex
             if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
                 throw "Import mode requires -ArchivePath."
@@ -1472,7 +1818,8 @@ try {
             $resolvedArchive = Resolve-FullPath -PathValue $ArchivePath
             $result = Import-HistoryArchive -SourceArchive $resolvedArchive -TargetRoot $resolvedCodexHome `
                 -ForceAppStateRestore:$RestoreAppState -RemapModelProvider:$RewriteModelProvider `
-                -RequestedModelProvider $TargetModelProvider
+                -RequestedModelProvider $TargetModelProvider -SelectedSessionIds $selectedSessionIds
+            Write-ProgressEvent -Percent 100 -Stage "Complete"
             Write-Host ("import complete`tcodexHome={0}`tcopied={1}`tunchanged={2}`tconflicts={3}`tindexAdded={4}`tthreadIndexAdded={5}`tappState={6}`tprovider={7}`tproviderFiles={8}`tproviderIndexRows={9}`tproviderSkipped={10}" -f `
                 $result.CodexHome, $result.CopiedFiles, $result.UnchangedFiles, `
                 $result.ConflictingFilesKeptAtDestination, $result.IndexEntriesAdded, $result.ThreadIndexRowsAdded, $result.AppStateFilesRestored, `
@@ -1494,6 +1841,24 @@ try {
             Write-Host ("archive valid`tpath={0}`tschema={1}`tfiles={2}`tsessions={3}`tarchived={4}`tappState={5}`tartifacts={6}" -f `
                 $result.ArchivePath, $result.SchemaVersion, $result.FileCount, $result.SessionCount, `
                 $result.ArchivedSessionCount, $result.IncludesAppState, $result.IncludesArtifacts)
+        }
+        "List" {
+            $catalogResult = if (-not [string]::IsNullOrWhiteSpace($ArchivePath)) {
+                Get-ArchiveSessionCatalog -SourceArchive (Resolve-FullPath -PathValue $ArchivePath)
+            }
+            else {
+                if (-not (Test-Path -LiteralPath $resolvedCodexHome -PathType Container)) {
+                    throw "Codex home does not exist: $resolvedCodexHome"
+                }
+                [PSCustomObject]@{
+                    Sessions = @(Get-SessionCatalog -DataRoot $resolvedCodexHome)
+                    IsPartialHistory = $false
+                }
+            }
+            Write-Host ("catalog`t" + ([PSCustomObject]@{ isPartialHistory = [bool]$catalogResult.IsPartialHistory } | ConvertTo-Json -Compress))
+            foreach ($session in @($catalogResult.Sessions)) {
+                Write-Host ("session`t" + ($session | ConvertTo-Json -Compress))
+            }
         }
     }
 }

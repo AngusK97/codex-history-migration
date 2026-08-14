@@ -1,8 +1,8 @@
 # Codex History Migration
 
-在 Windows 电脑之间导出、校验和恢复 Codex 本地聊天历史。提供图形界面与命令行两种入口，仅依赖 Windows PowerShell 5.1，不需要安装第三方模块。
+在 Windows 电脑之间备份和恢复 Codex 本地聊天历史。提供中英文图形界面与命令行两种入口，仅依赖 Windows PowerShell 5.1，不需要安装第三方模块。
 
-这是社区维护的非官方工具，不隶属于 OpenAI。Codex 本地数据格式可能随版本变化；正式恢复前请先使用“校验”功能，并保留工具生成的回滚包。
+这是社区维护的非官方工具，不隶属于 OpenAI。Codex 本地数据格式可能随版本变化；GUI 会在恢复前自动校验 ZIP，命令行仍提供独立 `Inspect` 模式。请保留工具生成的回滚包。
 
 ## 系统要求
 
@@ -22,6 +22,8 @@ cd codex-history-migration
 - `Export`：将活动会话、归档会话、标题索引和桌面端状态打包为 `.zip`。
 - `Inspect`：在不修改本机数据的情况下校验归档格式、文件大小和逐文件 SHA-256。
 - `Import`：校验后恢复历史；目标端已有历史时合并会话文件、标题索引和兼容的桌面端线程索引，并先自动创建回滚包。
+- 导出和恢复均可查看、搜索并选择会话；部分操作会同步过滤 transcript、标题索引和桌面端线程元数据。
+- GUI 支持中文/英文即时切换，并在导出和恢复过程中显示阶段和确定百分比。
 - 恢复时可把迁入会话的 `model_provider` 重映射到新电脑当前 provider，并同步桌面端线程索引。
 - 默认排除 `auth.json`、`.sandbox-secrets/`、OAuth 锁和其他认证状态。
 - 默认拒绝在 Codex、Codex app server 或 ChatGPT 桌面端运行时导出或恢复，避免复制不一致的 SQLite 状态。
@@ -42,11 +44,11 @@ cd codex-history-migration
 Start-CodexHistoryMigration.cmd
 ```
 
-在旧电脑选择“导出”，确认 Codex 数据目录，选择 ZIP 保存位置，然后点击“导出 ZIP”。把 ZIP 和整个工具目录复制到新电脑。
+在旧电脑选择“导出”，确认 Codex 数据目录；如需部分备份，点击“选择会话”。选择 ZIP 保存位置后点击“创建备份”。把 ZIP 和整个工具目录复制到新电脑。
 
-在新电脑先选择“校验”，加载 ZIP 并点击“校验 ZIP”；通过后切换到“恢复”，选择相同 ZIP 和目标 Codex 数据目录，点击“恢复历史”。“改为新电脑 Provider”默认启用；目标 Provider 留空时自动读取新电脑的用户级 `config.toml`，也可以手动填写 provider ID。
+在新电脑切换到“恢复”，选择 ZIP；如需部分恢复，点击“选择会话”。确认目标 Codex 数据目录后点击“恢复会话”。工具会在写入前自动完成完整校验。“适配为本机 Provider”默认启用；目标 Provider 留空时自动读取新电脑的用户级 `config.toml`，也可以手动填写 provider ID。
 
-界面下方会显示执行结果。恢复已有历史时会弹出确认，并沿用核心脚本的合并、冲突保护与自动备份机制。
+“高级选项”默认折叠。其中“使用备份覆盖本机桌面状态”会用 ZIP 中的桌面状态数据库替换本机对应文件，可能改变本机界面状态和索引；它默认关闭，且不能与部分会话恢复同时启用。技术输出位于折叠的“详细信息”中，失败时自动展开。
 
 ### 命令行
 
@@ -135,6 +137,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
   -IncludeArtifacts
 ```
 
+按会话导出或恢复时，先创建一个 UTF-8 文本文件，每行写一个会话 ID，再传入 `-SessionSelectionFile`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 `
+  -Mode Export `
+  -ArchivePath "E:\selected-history.zip" `
+  -SessionSelectionFile "E:\selected-session-ids.txt"
+```
+
+可用 `List` 模式输出 GUI 使用的会话目录；提供 `-ArchivePath` 时列出 ZIP，否则列出 `-CodexHome`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 `
+  -Mode List `
+  -ArchivePath "E:\codex-history.zip"
+```
+
+部分导出不会包含 `.codex-global-state.json`，会裁剪 SQLite 中未选会话的线程、动态工具和派生关系记录；无法可靠归属到单个会话的生成图片与可视化也不会进入部分备份。
+
 ## 恢复语义
 
 - 所有文件在写入前必须通过清单和 SHA-256 校验。
@@ -145,6 +166,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 - 若来源与目标存在同名且表结构兼容的 `state_*.sqlite`，工具会把来源 `threads` 表中目标缺失的会话行合并到目标数据库；已有目标行不覆盖。
 - 合并或恢复桌面端状态后，迁入线程的 `rollout_path` 会改为新电脑上实际写入的 transcript 路径，避免继续引用旧电脑绝对路径。
 - 目标端已有历史时默认不覆盖桌面端状态；确实需要用来源状态替换时增加 `-RestoreAppState`。
+- 部分会话恢复始终采用合并策略，不能与 `-RestoreAppState` 同时使用，避免用完整备份状态覆盖未选择的本机会话。
 - 目标端存在受支持的数据时，恢复前会在 `.codex` 的同级目录 `codex-history-backups/` 创建回滚 ZIP。
 - 同名会话文件内容不同时，目标端版本会保留，来源版本仍完整保存在导入 ZIP 中，并在结果中报告冲突数。
 - `-RewriteModelProvider` 只改写成功迁入会话的 `session_meta.payload.model_provider`，并按会话 ID 同步新合并的 `state_*.sqlite` 线程行；不会覆盖目标端原有的不同会话。
@@ -153,7 +175,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 
 ## 参数
 
-- `-Mode`：必填，`Export`、`Import` 或 `Inspect`。
+- `-Mode`：必填，`Export`、`Import`、`Inspect` 或 `List`。`List` 供会话选择器和自动化枚举使用。
 - `-ArchivePath`：ZIP 路径。`Import` 和 `Inspect` 必填；`Export` 不指定时写入当前目录。
 - `-CodexHome`：可选，覆盖默认 Codex 数据目录。
 - `-HistoryOnly`：导出时不包含桌面端状态数据库。
@@ -161,6 +183,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 - `-RestoreAppState`：导入到已有历史的目标端时也替换桌面端状态；执行前仍会自动备份。
 - `-RewriteModelProvider`：把迁入历史指向新电脑的 provider；GUI 恢复模式默认启用。
 - `-TargetModelProvider`：显式指定目标 provider ID；省略时从目标 `config.toml` 自动解析。
+- `-SessionSelectionFile`：UTF-8 文本，每行一个会话 ID；用于部分导出或部分恢复。
 - `-AllowRunningCodex`：跳过进程检查。只适合隔离测试；真实迁移不建议使用。
 - `-Force`：导出时允许覆盖已存在的 ZIP，不影响导入冲突策略。
 
@@ -169,7 +192,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 运行 PowerShell 语法检查和回归测试：
 
 ```powershell
-$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1'
+$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1', 'tests\CodexHistoryMigration.Selection.Tests.ps1'
 foreach ($file in $files) {
     $tokens = $null
     $errors = $null
@@ -177,6 +200,7 @@ foreach ($file in $files) {
     if ($errors.Count -gt 0) { $errors; throw "PowerShell syntax check failed: $file" }
 }
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Regression.Tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Selection.Tests.ps1
 ```
 
 ## 边界
