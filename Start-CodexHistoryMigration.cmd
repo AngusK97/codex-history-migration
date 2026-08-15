@@ -1,2 +1,3 @@
 @echo off
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0CodexHistoryMigration.UI.ps1"
+start "" /b "%SystemRoot%\System32\wscript.exe" "%~dp0Start-CodexHistoryMigration.vbs"
+exit /b 0

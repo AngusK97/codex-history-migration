@@ -41,11 +41,13 @@ cd codex-history-migration
 
 ### 图形界面（推荐）
 
-双击：
+双击无终端图形入口：
 
 ```text
-Start-CodexHistoryMigration.cmd
+Start-CodexHistoryMigration.vbs
 ```
+
+旧的 `Start-CodexHistoryMigration.cmd` 仍可使用，它会立即转交给同一个无终端入口后退出。操作日志和错误信息保留在 GUI 的“详细信息”中。
 
 在旧电脑选择“导出”，确认 Codex 数据目录；如需部分备份，点击“选择会话”。选择 ZIP 保存位置后点击“创建备份”。把 ZIP 和整个工具目录复制到新电脑。
 
@@ -216,7 +218,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 运行 PowerShell 语法检查和回归测试：
 
 ```powershell
-$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1', 'tests\CodexHistoryMigration.Selection.Tests.ps1', 'tests\CodexHistoryMigration.Management.Tests.ps1'
+$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1', 'tests\CodexHistoryMigration.Selection.Tests.ps1', 'tests\CodexHistoryMigration.Management.Tests.ps1', 'tests\CodexHistoryMigration.Launcher.Tests.ps1'
 foreach ($file in $files) {
     $tokens = $null
     $errors = $null
@@ -226,6 +228,7 @@ foreach ($file in $files) {
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Regression.Tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Selection.Tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Management.Tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Launcher.Tests.ps1
 ```
 
 ## 边界
