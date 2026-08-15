@@ -289,6 +289,136 @@ try {
         throw "A mismatched source schema should emit a diagnostic warning."
     }
     Write-Host "PASS: skips SQLite thread merge when source and target column layouts differ."
+
+    $projectSourceHome = Join-Path $temporaryRoot "project-source-home"
+    $projectTargetHome = Join-Path $temporaryRoot "project-target-home"
+    $projectRoot = Join-Path $temporaryRoot "recovered-projects"
+    $projectArchive = Join-Path $temporaryRoot "project-history.zip"
+    $projectSourceDatabase = Join-Path $projectSourceHome "state_5.sqlite"
+    $projectTargetDatabase = Join-Path $projectTargetHome "state_5.sqlite"
+    $projectIds = @(
+        "55555555-5555-4555-8555-555555555555",
+        "66666666-6666-4666-8666-666666666666"
+    )
+    $projectSourceCwds = @("Z:\CompanyA\Alpha", "Z:\CompanyB\Alpha")
+    $projectRelativeSessions = @(
+        "sessions\2026\08\14\rollout-2026-08-14T15-00-00-$($projectIds[0]).jsonl",
+        "sessions\2026\08\14\rollout-2026-08-14T16-00-00-$($projectIds[1]).jsonl"
+    )
+    $projectTargetCwds = @(
+        (Join-Path $projectRoot "Alpha"),
+        (Join-Path $projectRoot "Alpha-2")
+    )
+
+    [System.IO.Directory]::CreateDirectory($projectSourceHome) | Out-Null
+    [System.IO.Directory]::CreateDirectory($projectTargetHome) | Out-Null
+    [System.IO.Directory]::CreateDirectory($projectRoot) | Out-Null
+    $projectIndexLines = [System.Collections.Generic.List[string]]::new()
+    for ($index = 0; $index -lt $projectIds.Count; $index++) {
+        $sourceFile = Join-Path $projectSourceHome $projectRelativeSessions[$index]
+        [System.IO.Directory]::CreateDirectory((Split-Path -Parent $sourceFile)) | Out-Null
+        $line = [ordered]@{
+            timestamp = "2026-08-14T15:00:00Z"
+            type = "session_meta"
+            payload = [ordered]@{
+                id = $projectIds[$index]
+                cwd = $projectSourceCwds[$index]
+                model_provider = "old-provider"
+            }
+        } | ConvertTo-Json -Depth 8 -Compress
+        [System.IO.File]::WriteAllText($sourceFile, $line + [Environment]::NewLine, $utf8NoBom)
+        $projectIndexLines.Add(([ordered]@{
+            id = $projectIds[$index]
+            title = "Recovered project $index"
+            updated_at = "2026-08-14T15:00:00Z"
+        } | ConvertTo-Json -Compress))
+    }
+    [System.IO.File]::WriteAllLines((Join-Path $projectSourceHome "session_index.jsonl"), @($projectIndexLines), $utf8NoBom)
+
+    $projectSchema = "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, model_provider TEXT, cwd TEXT, title TEXT, archived INTEGER NOT NULL DEFAULT 0)"
+    [CodexHistoryTestSqlite]::Execute($projectSourceDatabase, $projectSchema)
+    [CodexHistoryTestSqlite]::Execute($projectTargetDatabase, $projectSchema)
+    for ($index = 0; $index -lt $projectIds.Count; $index++) {
+        $sourceFile = (Join-Path $projectSourceHome $projectRelativeSessions[$index]).Replace("'", "''")
+        $sourceCwd = $projectSourceCwds[$index].Replace("'", "''")
+        [CodexHistoryTestSqlite]::Execute($projectSourceDatabase, "INSERT INTO threads VALUES ('$($projectIds[$index])', '$sourceFile', 'old-provider', '$sourceCwd', 'Recovered project $index', 0)")
+    }
+    $existingTargetId = "77777777-7777-4777-8777-777777777777"
+    $existingTargetRelative = "sessions\2026\08\14\rollout-2026-08-14T17-00-00-$existingTargetId.jsonl"
+    $existingTargetFile = Join-Path $projectTargetHome $existingTargetRelative
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $existingTargetFile)) | Out-Null
+    $existingTargetLine = [ordered]@{
+        timestamp = "2026-08-14T17:00:00Z"
+        type = "session_meta"
+        payload = [ordered]@{ id = $existingTargetId; cwd = $projectTargetHome; model_provider = "target-provider" }
+    } | ConvertTo-Json -Depth 8 -Compress
+    [System.IO.File]::WriteAllText($existingTargetFile, $existingTargetLine + [Environment]::NewLine, $utf8NoBom)
+    [System.IO.File]::WriteAllLines(
+        (Join-Path $projectTargetHome "session_index.jsonl"),
+        @(([ordered]@{ id = $existingTargetId; title = "Existing target"; updated_at = "2026-08-14T17:00:00Z" } | ConvertTo-Json -Compress)),
+        $utf8NoBom
+    )
+    $escapedExistingTargetFile = $existingTargetFile.Replace("'", "''")
+    $escapedProjectTargetHome = $projectTargetHome.Replace("'", "''")
+    [CodexHistoryTestSqlite]::Execute($projectTargetDatabase, "INSERT INTO threads VALUES ('$existingTargetId', '$escapedExistingTargetFile', 'target-provider', '$escapedProjectTargetHome', 'Existing target', 0)")
+
+    Invoke-Migrator -Arguments @("-Mode", "Export", "-CodexHome", $projectSourceHome, "-ArchivePath", $projectArchive, "-AllowRunningCodex") | Out-Null
+    $partialProjectTarget = Join-Path $temporaryRoot "partial-project-target-home"
+    $partialProjectRoot = Join-Path $temporaryRoot "partial-recovered-projects"
+    $partialSelectionFile = Join-Path $temporaryRoot "partial-project-selection.txt"
+    [System.IO.Directory]::CreateDirectory($partialProjectTarget) | Out-Null
+    [System.IO.Directory]::CreateDirectory($partialProjectRoot) | Out-Null
+    [System.IO.File]::WriteAllLines($partialSelectionFile, @($projectIds[1]), $utf8NoBom)
+    Invoke-Migrator -Arguments @(
+        "-Mode", "Import",
+        "-CodexHome", $partialProjectTarget,
+        "-ArchivePath", $projectArchive,
+        "-ProjectRoot", $partialProjectRoot,
+        "-SessionSelectionFile", $partialSelectionFile,
+        "-AllowRunningCodex"
+    ) | Out-Null
+    $partialTargetFile = Join-Path $partialProjectTarget $projectRelativeSessions[1]
+    $partialRecord = ([System.IO.File]::ReadAllLines($partialTargetFile, [System.Text.Encoding]::UTF8)[0] | ConvertFrom-Json)
+    Assert-Equal -Expected (Join-Path $partialProjectRoot "Alpha-2") -Actual ([string]$partialRecord.payload.cwd) `
+        -Message "Partial restores must use the same collision mapping as a full restore."
+    Assert-Equal -Expected 1 -Actual (@(Get-ChildItem -LiteralPath $partialProjectRoot -Directory).Count) `
+        -Message "A partial restore should create a placeholder only for its selected session."
+
+    $projectImportArguments = @(
+        "-Mode", "Import",
+        "-CodexHome", $projectTargetHome,
+        "-ArchivePath", $projectArchive,
+        "-ProjectRoot", $projectRoot,
+        "-AllowRunningCodex"
+    )
+    $projectOutput = Invoke-Migrator -Arguments $projectImportArguments
+    $projectOutput | ForEach-Object { Write-Host $_ }
+
+    Assert-Equal -Expected 2 -Actual (@(Get-ChildItem -LiteralPath $projectRoot -Directory).Count) `
+        -Message "Two colliding source names should create two deterministic placeholder folders."
+    for ($index = 0; $index -lt $projectIds.Count; $index++) {
+        if (-not (Test-Path -LiteralPath $projectTargetCwds[$index] -PathType Container)) {
+            throw "Expected placeholder project folder: $($projectTargetCwds[$index])"
+        }
+        $targetFile = Join-Path $projectTargetHome $projectRelativeSessions[$index]
+        $targetRecord = ([System.IO.File]::ReadAllLines($targetFile, [System.Text.Encoding]::UTF8)[0] | ConvertFrom-Json)
+        Assert-Equal -Expected $projectTargetCwds[$index] -Actual ([string]$targetRecord.payload.cwd) `
+            -Message "Imported transcript should use its placeholder project folder."
+        Assert-Equal -Expected $projectTargetCwds[$index] `
+            -Actual ([CodexHistoryTestSqlite]::ScalarText($projectTargetDatabase, "SELECT cwd FROM threads WHERE id = '$($projectIds[$index])'")) `
+            -Message "Imported thread index should use the same placeholder project folder."
+    }
+    if (($projectOutput -join [Environment]::NewLine) -notmatch "projectFoldersCreated=2\s+projectFoldersReused=0\s+projectSessionsRehomed=2") {
+        throw "Project restore should report created folders and rehomed sessions."
+    }
+
+    $repeatProjectOutput = Invoke-Migrator -Arguments $projectImportArguments
+    Assert-Equal -Expected 2 -Actual (@(Get-ChildItem -LiteralPath $projectRoot -Directory).Count) `
+        -Message "Repeated restore must not create additional placeholder folders."
+    if (($repeatProjectOutput -join [Environment]::NewLine) -notmatch "projectFoldersCreated=0\s+projectFoldersReused=2\s+projectSessionsRehomed=2") {
+        throw "Repeated project restore should reuse the deterministic folder mapping."
+    }
+    Write-Host "PASS: creates deterministic placeholder projects and rewrites transcript and thread cwd metadata."
 }
 finally {
     if (Test-Path -LiteralPath $temporaryRoot -PathType Container) {

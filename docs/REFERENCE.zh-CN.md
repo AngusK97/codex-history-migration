@@ -34,8 +34,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 `
   -Mode Import `
   -ArchivePath "E:\codex-history.zip" `
-  -RewriteModelProvider
+  -RewriteModelProvider `
+  -ProjectRoot "E:\Projects"
 ```
+
+`-ProjectRoot` 是可选参数。它只为工作目录在本机不存在的迁入会话创建空文件夹，然后把这些会话及兼容 SQLite 线程行改写到新路径。
 
 ### 设置 Provider
 
@@ -145,6 +148,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 - 目标已有受支持数据时，任何写入前都会创建回滚 ZIP。
 - 同名但内容不同的会话文件保留目标版本，并计入冲突数。
 - `-RewriteModelProvider` 只修改成功迁入的会话及其新合并的 SQLite 线程行。
+- `-ProjectRoot` 为缺失的旧工作目录创建确定性的空占位文件夹，并只改写成功迁入的会话。已有工作目录保持不变；同名目录使用 `Project-2` 等稳定后缀，重复恢复会复用相同文件夹。
+- 占位文件夹不会恢复源码、Git 历史、忽略文件或未提交改动。项目内容仍需单独恢复或克隆。
 - SQLite 线程表结构不兼容时会显示警告并跳过，transcript 和标题索引仍继续恢复。
 - 未指定 `-TargetModelProvider` 时，按活动 profile、根级 `model_provider`、`openai` 默认值的顺序解析 Provider。
 
@@ -160,6 +165,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 | `-RestoreAppState` | 创建回滚备份后，替换目标端对应桌面状态文件。 |
 | `-RewriteModelProvider` | 把迁入历史适配到目标 Provider；图形界面默认启用。 |
 | `-TargetModelProvider` | 显式指定目标 Provider ID；否则从 `config.toml` 解析。 |
+| `-ProjectRoot` | 已有的项目根目录；在其下为缺失的迁入项目路径创建空占位文件夹。图形界面中为可选项。 |
 | `-SessionSelectionFile` | UTF-8 文件，每行一个会话 ID；管理操作中为必填。 |
 | `-AllowRunningCodex` | 跳过进程检查，仅用于隔离测试。 |
 | `-Force` | 允许替换已有导出 ZIP，不改变导入冲突策略。 |

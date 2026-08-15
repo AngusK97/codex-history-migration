@@ -64,6 +64,8 @@ $script:Strings = @{
         overwriteState = "使用备份覆盖本机桌面状态"
         rewriteProvider = "适配为本机 Provider"
         targetProvider = "目标 Provider"
+        createProjectPlaceholders = "为缺失项目创建占位文件夹"
+        projectRoot = "项目根目录"
         createBackup = "创建备份"
         restoreSessions = "恢复会话"
         updateProvider = "更新 Provider"
@@ -85,6 +87,7 @@ $script:Strings = @{
         ValidatingArchive = "正在校验备份"
         PreparingSessions = "正在整理会话"
         CreatingRollbackBackup = "正在创建回滚备份"
+        CreatingProjectFolders = "正在创建项目占位文件夹"
         RestoringFiles = "正在恢复会话"
         MergingIndexes = "正在更新会话索引"
         PreparingProviderUpdate = "正在准备 Provider 更新"
@@ -95,6 +98,7 @@ $script:Strings = @{
         browseCodex = "选择 Codex 数据目录"
         browseSaveZip = "保存 Codex 历史备份"
         browseOpenZip = "选择 Codex 历史备份"
+        browseProjectRoot = "选择用于创建占位项目的根目录"
         zipFilter = "ZIP 归档 (*.zip)|*.zip"
         missingPath = "缺少路径"
         invalidPath = "路径无效"
@@ -103,6 +107,8 @@ $script:Strings = @{
         chooseCodex = "请选择 Codex 数据目录。"
         codexMissing = "Codex 数据目录不存在。"
         zipMissing = "ZIP 文件不存在。"
+        chooseProjectRoot = "请选择项目根目录。"
+        projectRootMissing = "项目根目录不存在。请先选择一个已有文件夹。"
         overwriteTitle = "确认覆盖"
         overwriteZip = "目标 ZIP 已存在，是否覆盖？"
         confirmRestore = "确认恢复"
@@ -113,6 +119,8 @@ $script:Strings = @{
         providerAuto = "迁入会话将自动适配本机 Provider。"
         providerNamed = "迁入会话将改为 Provider '{0}'。"
         providerKeep = "迁入会话将保留原 Provider。"
+        projectPlaceholders = "缺失的项目目录将在 {0} 下创建为空文件夹。不会恢复项目文件或 Git 历史。"
+        projectPathsKeep = "缺失的项目目录将保留原路径，不创建本机文件夹。"
         providerUpdateMessage = "将把选中的 {0} 个会话设置为 Provider '{1}'。`r`n工具会先创建完整回滚 ZIP。"
         deleteMessage = "将从本机删除选中的 {0} 个会话、标题和桌面线程索引。`r`n工具会先创建完整回滚 ZIP，但删除操作本身不可直接撤销。"
         continueQuestion = "是否继续？"
@@ -138,6 +146,7 @@ $script:Strings = @{
         partialOverwriteTip = "选择部分会话时不能覆盖完整的本机桌面状态。"
         stateTip = "用备份中的桌面状态数据库替换本机对应文件，可能改变本机界面状态和会话索引。"
         providerTip = "只调整迁入会话，不修改本机原有会话。留空时读取本机 config.toml。"
+        projectPlaceholderTip = "只创建空文件夹并重连会话路径，不会恢复项目文件、Git 历史或未提交改动。"
         historyOnlyTip = "不备份桌面状态数据库；恢复后的桌面可见性可能受影响。"
         partialArtifactsTip = "部分会话备份不会包含无法可靠归属到单个会话的生成文件。"
         allSessionsPhrase = "全部会话"
@@ -173,6 +182,8 @@ $script:Strings = @{
         overwriteState = "Overwrite local desktop state with backup"
         rewriteProvider = "Adapt sessions to this computer's Provider"
         targetProvider = "Target Provider"
+        createProjectPlaceholders = "Create placeholder folders for missing projects"
+        projectRoot = "Project root"
         createBackup = "Create backup"
         restoreSessions = "Restore sessions"
         updateProvider = "Update Provider"
@@ -194,6 +205,7 @@ $script:Strings = @{
         ValidatingArchive = "Validating backup"
         PreparingSessions = "Preparing sessions"
         CreatingRollbackBackup = "Creating rollback backup"
+        CreatingProjectFolders = "Creating project placeholders"
         RestoringFiles = "Restoring sessions"
         MergingIndexes = "Updating session indexes"
         PreparingProviderUpdate = "Preparing Provider update"
@@ -204,6 +216,7 @@ $script:Strings = @{
         browseCodex = "Choose Codex data folder"
         browseSaveZip = "Save Codex history backup"
         browseOpenZip = "Choose Codex history backup"
+        browseProjectRoot = "Choose the root folder for placeholder projects"
         zipFilter = "ZIP archives (*.zip)|*.zip"
         missingPath = "Missing path"
         invalidPath = "Invalid path"
@@ -212,6 +225,8 @@ $script:Strings = @{
         chooseCodex = "Choose a Codex data folder."
         codexMissing = "The Codex data folder does not exist."
         zipMissing = "The ZIP file does not exist."
+        chooseProjectRoot = "Choose a project root folder."
+        projectRootMissing = "The project root does not exist. Choose an existing folder."
         overwriteTitle = "Confirm overwrite"
         overwriteZip = "The destination ZIP already exists. Overwrite it?"
         confirmRestore = "Confirm restore"
@@ -222,6 +237,8 @@ $script:Strings = @{
         providerAuto = "Imported sessions will use this computer's configured Provider."
         providerNamed = "Imported sessions will use Provider '{0}'."
         providerKeep = "Imported sessions will keep their original Provider."
+        projectPlaceholders = "Missing project folders will be created as empty folders under '{0}'. Project files and Git history are not restored."
+        projectPathsKeep = "Missing project folders will keep their original paths; no local folders will be created."
         providerUpdateMessage = "Set the selected {0} sessions to Provider '{1}'.`r`nA complete rollback ZIP will be created first."
         deleteMessage = "Delete the selected {0} sessions, titles, and desktop thread indexes from this computer.`r`nA complete rollback ZIP will be created first, but the deletion itself cannot be directly undone."
         continueQuestion = "Continue?"
@@ -247,6 +264,7 @@ $script:Strings = @{
         partialOverwriteTip = "A partial session restore cannot overwrite the complete local desktop state."
         stateTip = "Replaces matching local desktop-state files with the backup and may change UI state and session indexes."
         providerTip = "Only affects imported sessions. Leave blank to read this computer's config.toml."
+        projectPlaceholderTip = "Creates empty folders and reconnects session paths only. Project files, Git history, and uncommitted changes are not restored."
         historyOnlyTip = "Excludes desktop-state databases; restored sessions may not appear in every Desktop version."
         partialArtifactsTip = "Partial backups exclude generated files that cannot be reliably assigned to one session."
         allSessionsPhrase = "all sessions"
@@ -529,6 +547,9 @@ function Save-ModeValues {
 
 function Update-Layout {
     $isManage = $script:SelectedMode -eq "Manage"
+    $advancedHeight = if ($script:SelectedMode -eq "Import") { 178 } else { 104 }
+    $script:AdvancedPanel.Height = $advancedHeight
+    $script:BodyPanel.AutoScrollMinSize = [System.Drawing.Size]::new(0, $(if (-not $isManage -and $script:AdvancedExpanded) { 336 + $advancedHeight } else { 430 }))
     $script:AdvancedButton.Visible = -not $isManage
     $script:AdvancedPanel.Visible = -not $isManage -and $script:AdvancedExpanded
     $script:ManagementActionLabel.Visible = $isManage
@@ -569,6 +590,8 @@ function Update-Language {
     $script:RestoreAppStateCheckBox.Text = T "overwriteState"
     $script:RewriteProviderCheckBox.Text = T "rewriteProvider"
     $script:TargetProviderLabel.Text = T "targetProvider"
+    $script:CreateProjectPlaceholdersCheckBox.Text = T "createProjectPlaceholders"
+    $script:ProjectRootLabel.Text = T "projectRoot"
     $runTextKey = switch ($script:SelectedMode) {
         "Export" { "createBackup" }
         "Import" { "restoreSessions" }
@@ -596,6 +619,9 @@ function Update-Language {
     $script:ToolTip.SetToolTip($script:IncludeArtifactsCheckBox, (T "partialArtifactsTip"))
     $script:ToolTip.SetToolTip($script:RewriteProviderCheckBox, (T "providerTip"))
     $script:ToolTip.SetToolTip($script:TargetProviderTextBox, (T "providerTip"))
+    $script:ToolTip.SetToolTip($script:CreateProjectPlaceholdersCheckBox, (T "projectPlaceholderTip"))
+    $script:ToolTip.SetToolTip($script:ProjectRootTextBox, (T "projectPlaceholderTip"))
+    $script:ToolTip.SetToolTip($script:ProjectRootBrowseButton, (T "browseProjectRoot"))
     Update-SessionSummary
     Update-Layout
 }
@@ -905,6 +931,11 @@ function Test-UiInput {
     if ([string]::IsNullOrWhiteSpace($codexHome)) { Show-Message (T "chooseCodex") "missingPath"; return $false }
     if ($script:SelectedMode -eq "Export" -and -not (Test-Path -LiteralPath $codexHome -PathType Container)) { Show-Message (T "codexMissing") "invalidPath"; return $false }
     if ($script:SelectedMode -eq "Import" -and -not (Test-Path -LiteralPath $zip -PathType Leaf)) { Show-Message (T "zipMissing") "invalidPath"; return $false }
+    if ($script:SelectedMode -eq "Import" -and $script:CreateProjectPlaceholdersCheckBox.Checked) {
+        $projectRoot = $script:ProjectRootTextBox.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($projectRoot)) { Show-Message (T "chooseProjectRoot") "missingPath"; return $false }
+        if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) { Show-Message (T "projectRootMissing") "invalidPath"; return $false }
+    }
     $script:ForceExportOverwrite = $false
     if ($script:SelectedMode -eq "Export" -and (Test-Path -LiteralPath $zip -PathType Leaf)) {
         if ([System.Windows.Forms.MessageBox]::Show($script:MainForm, (T "overwriteZip"), (T "overwriteTitle"), "YesNo", "Warning") -ne "Yes") { return $false }
@@ -917,8 +948,13 @@ function Test-UiInput {
             else { Format-T "providerNamed" @($script:TargetProviderTextBox.Text.Trim()) }
         }
         else { T "providerKeep" }
+        $projectHandling = if ($script:CreateProjectPlaceholdersCheckBox.Checked) {
+            Format-T "projectPlaceholders" @($script:ProjectRootTextBox.Text.Trim())
+        }
+        else { T "projectPathsKeep" }
         $message = if ($script:RestoreAppStateCheckBox.Checked) { Format-T "restoreOverwrite" @($scope, $provider) }
         else { Format-T "restoreMerge" @($scope, $provider) }
+        $message += "`r`n" + $projectHandling
         $message += "`r`n" + (T "continueQuestion")
         if ([System.Windows.Forms.MessageBox]::Show($script:MainForm, $message, (T "confirmRestore"), "YesNo", "Warning") -ne "Yes") { return $false }
     }
@@ -962,6 +998,9 @@ function Get-CoreProcessArguments {
         $arguments += "-RewriteModelProvider"
         if (-not [string]::IsNullOrWhiteSpace($script:TargetProviderTextBox.Text)) { $arguments += @("-TargetModelProvider", $script:TargetProviderTextBox.Text.Trim()) }
     }
+    if ($script:SelectedMode -eq "Import" -and $script:CreateProjectPlaceholdersCheckBox.Checked) {
+        $arguments += @("-ProjectRoot", $script:ProjectRootTextBox.Text.Trim())
+    }
     if (-not [string]::IsNullOrWhiteSpace($script:SelectionFile)) { $arguments += @("-SessionSelectionFile", $script:SelectionFile) }
     return ($arguments | ForEach-Object { ConvertTo-QuotedProcessArgument $_ }) -join " "
 }
@@ -971,12 +1010,14 @@ function Set-UiBusy {
     foreach ($control in @($script:RunButton, $script:ExportModeButton, $script:ImportModeButton, $script:ManageModeButton, $script:ChineseButton, $script:EnglishButton,
         $script:SourceTextBox, $script:DestinationTextBox, $script:SourceBrowseButton, $script:DestinationBrowseButton, $script:ChooseSessionsButton,
         $script:AdvancedButton, $script:HistoryOnlyCheckBox, $script:IncludeArtifactsCheckBox, $script:RewriteProviderCheckBox,
-        $script:SetProviderActionButton, $script:DeleteActionButton)) {
+        $script:CreateProjectPlaceholdersCheckBox, $script:ProjectRootBrowseButton, $script:SetProviderActionButton, $script:DeleteActionButton)) {
         $control.Enabled = -not $Busy
     }
     $partial = $null -ne $script:SelectedSessionIds -or ($script:SelectedMode -eq "Import" -and $script:ArchiveIsPartial)
     $script:RestoreAppStateCheckBox.Enabled = -not $Busy -and -not $partial
     $script:TargetProviderTextBox.Enabled = -not $Busy -and $script:RewriteProviderCheckBox.Checked
+    $script:ProjectRootTextBox.Enabled = -not $Busy -and $script:CreateProjectPlaceholdersCheckBox.Checked
+    $script:ProjectRootBrowseButton.Enabled = -not $Busy -and $script:CreateProjectPlaceholdersCheckBox.Checked
 }
 
 function Handle-CoreLine {
@@ -1235,7 +1276,7 @@ $script:AdvancedButton.Cursor = "Hand"
 $script:AdvancedButton.ForeColor = $script:Palette.MutedText
 $script:AdvancedButton.BackColor = $script:Palette.Canvas
 
-$script:AdvancedPanel = New-InputFrame 36 324 692 104
+$script:AdvancedPanel = New-InputFrame 36 324 692 178
 $script:AdvancedPanel.Anchor = "Top, Left, Right"
 $script:AdvancedPanel.BackColor = $script:Palette.Surface
 $script:ExportOptionsPanel = [System.Windows.Forms.Panel]::new()
@@ -1255,7 +1296,7 @@ $script:ExportOptionsPanel.Controls.AddRange(@($script:HistoryOnlyCheckBox, $scr
 
 $script:ImportOptionsPanel = [System.Windows.Forms.Panel]::new()
 $script:ImportOptionsPanel.Location = [System.Drawing.Point]::new(10, 8)
-$script:ImportOptionsPanel.Size = [System.Drawing.Size]::new(672, 88)
+$script:ImportOptionsPanel.Size = [System.Drawing.Size]::new(672, 162)
 $script:ImportOptionsPanel.Anchor = "Top, Bottom, Left, Right"
 $script:ImportOptionsPanel.BackColor = $script:Palette.Surface
 $script:RestoreAppStateCheckBox = [System.Windows.Forms.CheckBox]::new()
@@ -1273,7 +1314,34 @@ $script:TargetProviderTextBox.Location = [System.Drawing.Point]::new(462, 40)
 $script:TargetProviderTextBox.Size = [System.Drawing.Size]::new(184, 28)
 $script:TargetProviderTextBox.Anchor = "Top, Left, Right"
 $script:TargetProviderTextBox.BackColor = $script:Palette.Field
-$script:ImportOptionsPanel.Controls.AddRange(@($script:RestoreAppStateCheckBox, $script:RewriteProviderCheckBox, $script:TargetProviderLabel, $script:TargetProviderTextBox))
+$script:CreateProjectPlaceholdersCheckBox = [System.Windows.Forms.CheckBox]::new()
+$script:CreateProjectPlaceholdersCheckBox.Location = [System.Drawing.Point]::new(16, 76)
+$script:CreateProjectPlaceholdersCheckBox.Size = [System.Drawing.Size]::new(630, 26)
+$script:CreateProjectPlaceholdersCheckBox.Checked = $false
+$script:CreateProjectPlaceholdersCheckBox.BackColor = $script:Palette.Surface
+$script:ProjectRootLabel = New-UiLabel "" 16 116 122
+$script:ProjectRootInputFrame = New-InputFrame 146 108 500 ([int]$script:Metrics.InputHeight)
+$script:ProjectRootInputFrame.Anchor = "Top, Left, Right"
+$script:ProjectRootTextBox = [System.Windows.Forms.TextBox]::new()
+$script:ProjectRootTextBox.Location = [System.Drawing.Point]::new(12, 9)
+$script:ProjectRootTextBox.Size = [System.Drawing.Size]::new(430, 22)
+$script:ProjectRootTextBox.Anchor = "Top, Left, Right"
+$script:ProjectRootTextBox.BorderStyle = "None"
+$script:ProjectRootTextBox.BackColor = $script:Palette.Field
+$script:ProjectRootTextBox.Enabled = $false
+$script:ProjectRootBrowseButton = New-SegmentButton 452 2 46 34
+$script:ProjectRootBrowseButton.Text = "⋯"
+$script:ProjectRootBrowseButton.Font = [System.Drawing.Font]::new($script:UiFontFamily, 13, [System.Drawing.FontStyle]::Bold)
+$script:ProjectRootBrowseButton.FlatAppearance.BorderSize = 0
+$script:ProjectRootBrowseButton.BackColor = $script:Palette.Field
+$script:ProjectRootBrowseButton.ForeColor = $script:Palette.MutedText
+$script:ProjectRootBrowseButton.FlatAppearance.MouseOverBackColor = $script:Palette.AccentSoft
+$script:ProjectRootBrowseButton.FlatAppearance.MouseDownBackColor = $script:Palette.AccentSoft
+$script:ProjectRootBrowseButton.Anchor = "Top, Right"
+$script:ProjectRootBrowseButton.Enabled = $false
+$script:ProjectRootInputFrame.Controls.AddRange(@($script:ProjectRootTextBox, $script:ProjectRootBrowseButton))
+Connect-InputFrame $script:ProjectRootInputFrame $script:ProjectRootTextBox
+$script:ImportOptionsPanel.Controls.AddRange(@($script:RestoreAppStateCheckBox, $script:RewriteProviderCheckBox, $script:TargetProviderLabel, $script:TargetProviderTextBox, $script:CreateProjectPlaceholdersCheckBox, $script:ProjectRootLabel, $script:ProjectRootInputFrame))
 $script:AdvancedPanel.Controls.AddRange(@($script:ExportOptionsPanel, $script:ImportOptionsPanel))
 
 $script:BodyPanel.Controls.AddRange(@(
@@ -1380,6 +1448,12 @@ $script:DeleteActionButton.TabIndex = 14
 $script:DestinationTextBox.TabIndex = 15
 $script:DestinationBrowseButton.TabIndex = 16
 $script:AdvancedButton.TabIndex = 17
+$script:RestoreAppStateCheckBox.TabIndex = 18
+$script:RewriteProviderCheckBox.TabIndex = 19
+$script:TargetProviderTextBox.TabIndex = 20
+$script:CreateProjectPlaceholdersCheckBox.TabIndex = 21
+$script:ProjectRootTextBox.TabIndex = 22
+$script:ProjectRootBrowseButton.TabIndex = 23
 $script:RunButton.TabIndex = 30
 $script:DetailsButton.TabIndex = 31
 
@@ -1404,12 +1478,30 @@ $script:SetProviderActionButton.Add_Click({ Set-ManagementAction "SetProvider" }
 $script:DeleteActionButton.Add_Click({ Set-ManagementAction "Delete" })
 $script:ChineseButton.Add_Click({ $script:Language = "zh"; Update-Language })
 $script:EnglishButton.Add_Click({ $script:Language = "en"; Update-Language })
-$script:AdvancedButton.Add_Click({ $script:AdvancedExpanded = -not $script:AdvancedExpanded; Update-Layout })
+$script:AdvancedButton.Add_Click({
+    $script:AdvancedExpanded = -not $script:AdvancedExpanded
+    Update-Layout
+    if ($script:AdvancedExpanded) { $script:BodyPanel.ScrollControlIntoView($script:AdvancedPanel) }
+    else { $script:BodyPanel.AutoScrollPosition = [System.Drawing.Point]::new(0, 0) }
+})
 $script:DetailsButton.Add_Click({ $script:DetailsExpanded = -not $script:DetailsExpanded; Update-Layout })
 $script:ChooseSessionsButton.Add_Click({ Show-SessionPicker })
 $script:RunButton.Add_Click({ Start-MigrationOperation })
 $script:SourceTextBox.Add_TextChanged({ Reset-SessionSelection })
 $script:RewriteProviderCheckBox.Add_CheckedChanged({ $script:TargetProviderTextBox.Enabled = $script:RewriteProviderCheckBox.Checked -and $null -eq $script:ActiveProcess })
+$script:CreateProjectPlaceholdersCheckBox.Add_CheckedChanged({
+    $enabled = $script:CreateProjectPlaceholdersCheckBox.Checked -and $null -eq $script:ActiveProcess
+    $script:ProjectRootTextBox.Enabled = $enabled
+    $script:ProjectRootBrowseButton.Enabled = $enabled
+})
+
+$script:ProjectRootBrowseButton.Add_Click({
+    $dialog = [System.Windows.Forms.FolderBrowserDialog]::new()
+    $dialog.Description = T "browseProjectRoot"
+    if (Test-Path -LiteralPath $script:ProjectRootTextBox.Text -PathType Container) { $dialog.SelectedPath = $script:ProjectRootTextBox.Text }
+    if ($dialog.ShowDialog($script:MainForm) -eq "OK") { $script:ProjectRootTextBox.Text = $dialog.SelectedPath }
+    $dialog.Dispose()
+})
 
 $script:SourceBrowseButton.Add_Click({
     if ($script:SelectedMode -ne "Import") {

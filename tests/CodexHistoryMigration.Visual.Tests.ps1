@@ -53,7 +53,7 @@ Assert-True ($theme.Metrics.SpacingBase -eq 8) "The visual system must use an 8p
 Assert-True ($theme.Metrics.RadiusSmall -ge 3 -and $theme.Metrics.RadiusSmall -le 6) "Small radius must stay restrained."
 Assert-True ($theme.Metrics.RadiusMedium -ge 4 -and $theme.Metrics.RadiusMedium -le 8) "Medium radius must stay restrained."
 
-$uiContent = Get-Content -LiteralPath $uiPath -Raw
+$uiContent = [System.IO.File]::ReadAllText($uiPath, [System.Text.Encoding]::UTF8)
 Assert-True ($uiContent -match 'Import-PowerShellDataFile') "The GUI must load the semantic theme file."
 Assert-True ($uiContent -match '(?m)^\$script:Language\s*=\s*"en"\s*$') "The GUI must start in English by default."
 Assert-True ($uiContent -match 'New-InputFrame') "The GUI must provide a shared focused input frame."
@@ -62,5 +62,12 @@ Assert-True ($uiContent -match '\$focusBorderColor\s*=\s*\$script:Palette\.Accen
 foreach ($component in @('searchFrame', 'listFrame', 'dialogFooter')) {
     Assert-True ($uiContent -match ('\$' + $component)) "The session picker must include its modern $component component."
 }
+
+Assert-True ($uiContent -match '(?m)^\$script:CreateProjectPlaceholdersCheckBox\.Checked\s*=\s*\$false\s*$') "Placeholder project creation must be opt-in."
+Assert-True ($uiContent -match '\$script:ImportOptionsPanel\.Controls\.AddRange\([^\r\n]*CreateProjectPlaceholdersCheckBox') "The missing-project option must live in the restore advanced panel."
+Assert-True ($uiContent -match '@\("-ProjectRoot",\s*\$script:ProjectRootTextBox\.Text\.Trim\(\)\)') "The GUI must pass the selected project root to the core importer."
+Assert-True ($uiContent -match 'ScrollControlIntoView\(\$script:AdvancedPanel\)') "Opening advanced options must reveal the complete panel."
+Assert-True ($uiContent -match 'Project files and Git history are not restored') "The English UI must explain that placeholder folders do not restore project contents."
+Assert-True (([regex]::Matches($uiContent, 'projectPlaceholders\s*=')).Count -eq 2) "Both languages must explain placeholder project behavior."
 
 Write-Host "Visual design contract test passed."

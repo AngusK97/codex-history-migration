@@ -16,7 +16,7 @@ Back up, restore, and manage local Codex conversation history through a focused 
 | Task | Result |
 | --- | --- |
 | **Export** | Create a validated ZIP containing all or selected Codex conversations. |
-| **Restore** | Merge missing conversations into another computer without overwriting same-ID local history. |
+| **Restore** | Merge missing conversations, repair desktop indexes, and optionally reconnect missing project paths with empty placeholder folders. |
 | **Manage** | Set the Provider for selected conversations or remove selected local history. |
 
 The interface starts in English, switches between English and Chinese instantly, and keeps technical output available under **Details** instead of opening a terminal window.
@@ -56,7 +56,10 @@ The launcher opens only the graphical interface. The legacy `.cmd` launcher rema
 2. Create the backup and transfer the ZIP using a protected medium.
 3. On the new computer, open **Restore**, choose the ZIP, and optionally choose specific conversations.
 4. Keep **Adapt sessions to this computer's Provider** enabled unless the original Provider is already configured.
-5. Restore, then start Codex and search for the imported conversations.
+5. If the old project folders do not exist on the new computer, open **Advanced options**, enable **Create placeholder folders for missing projects**, and choose an existing project root.
+6. Restore, then start Codex and search for the imported conversations.
+
+Placeholder projects are empty folders that give imported conversations a valid local working directory. They do not contain the old source code, Git history, or uncommitted changes. Restore or clone the real projects separately when you need their contents.
 
 Use the same or a newer Codex version on the destination computer, and launch Codex at least once before restoring.
 
@@ -100,7 +103,7 @@ See the [complete reference](docs/REFERENCE.md) for CLI examples, archive conten
 
 - The tool migrates local Codex history, not Git repositories, project files, login state, API keys, MCP credentials, model permissions, or `config.toml`.
 - Provider adaptation updates local references only. The destination computer must already be able to use the target Provider.
-- Recorded working directories remain paths from the old computer. Restore projects separately and reconnect them on the destination.
+- By default, recorded working directories remain paths from the old computer. The optional placeholder-project feature can create empty local folders and rewrite successfully imported session paths; it does not restore project contents.
 - Generated images and visualizations are excluded by default. Shared artifacts that cannot be reliably attributed to one conversation are not removed by session deletion.
 - Desktop compatibility depends on the installed Codex version and local data format. This is not an official Codex-to-Codex migration interface.
 

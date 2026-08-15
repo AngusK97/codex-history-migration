@@ -19,6 +19,8 @@ param(
 
     [string]$TargetModelProvider = "",
 
+    [string]$ProjectRoot = "",
+
     [string]$SessionSelectionFile = "",
 
     [switch]$AllowRunningCodex,
@@ -31,7 +33,7 @@ $ErrorActionPreference = "Stop"
 
 # 工具和归档格式版本用于拒绝不兼容的迁移包。
 $script:ToolName = "CodexHistoryMigration"
-$script:ToolVersion = "1.2.0"
+$script:ToolVersion = "1.3.0"
 $script:SchemaVersion = 1
 $script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $script:SensitiveTopLevelNames = @(
@@ -841,6 +843,48 @@ function New-ProviderRewrittenSessionFile {
     }
 }
 
+# 在临时区把单个会话重新关联到新电脑上的项目占位目录。
+function New-CwdRewrittenSessionFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceFile,
+        [Parameter(Mandatory = $true)][string]$DestinationFile,
+        [Parameter(Mandatory = $true)][string]$Cwd
+    )
+
+    $lines = @([System.IO.File]::ReadAllLines($SourceFile, [System.Text.Encoding]::UTF8))
+    $sessionId = ""
+    $metadataFound = $false
+    $changed = $false
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        try { $record = $lines[$index] | ConvertFrom-Json }
+        catch { continue }
+
+        if ([string]$record.type -ne "session_meta" -or $null -eq $record.payload) { continue }
+        $sessionId = [string]$record.payload.id
+        $cwdProperty = $record.payload.PSObject.Properties["cwd"]
+        if ($null -eq $cwdProperty) { break }
+        $metadataFound = $true
+        if ([string]$cwdProperty.Value -cne $Cwd) {
+            $record.payload.cwd = $Cwd
+            $lines[$index] = $record | ConvertTo-Json -Depth 100 -Compress
+            $changed = $true
+        }
+        break
+    }
+
+    if (-not $metadataFound) {
+        return [PSCustomObject]@{ SourceFile = $SourceFile; SessionId = ""; MetadataFound = $false; Changed = $false }
+    }
+
+    Write-LinesAtomically -Destination $DestinationFile -Lines $lines
+    return [PSCustomObject]@{
+        SourceFile = $DestinationFile
+        SessionId = $sessionId
+        MetadataFound = $true
+        Changed = $changed
+    }
+}
+
 # 读取 transcript 的稳定会话 ID 和 provider 元数据。
 function Get-HistorySessionMetadata {
     param([Parameter(Mandatory = $true)][string]$SourceFile)
@@ -863,9 +907,11 @@ function Get-HistorySessionMetadata {
 
             if ([string]$record.type -eq "session_meta" -and $null -ne $record.payload) {
                 $providerProperty = $record.payload.PSObject.Properties["model_provider"]
+                $cwdProperty = $record.payload.PSObject.Properties["cwd"]
                 return [PSCustomObject]@{
                     Id = [string]$record.payload.id
                     Provider = if ($null -ne $providerProperty) { [string]$providerProperty.Value } else { "" }
+                    Cwd = if ($null -ne $cwdProperty) { [string]$cwdProperty.Value } else { "" }
                 }
             }
         }
@@ -874,7 +920,73 @@ function Get-HistorySessionMetadata {
         $reader.Dispose()
     }
 
-    return [PSCustomObject]@{ Id = ""; Provider = "" }
+    return [PSCustomObject]@{ Id = ""; Provider = ""; Cwd = "" }
+}
+
+# 将旧工作目录的末级名称转换为安全的 Windows 占位目录名。
+function ConvertTo-SafeProjectFolderName {
+    param([Parameter(Mandatory = $true)][string]$SourceCwd)
+
+    $trimmed = $SourceCwd.Trim().TrimEnd([char[]]@([char]92, [char]47))
+    $name = [System.IO.Path]::GetFileName($trimmed)
+    foreach ($invalidCharacter in [System.IO.Path]::GetInvalidFileNameChars()) {
+        $name = $name.Replace([string]$invalidCharacter, "-")
+    }
+    $name = ($name -replace '\s+', ' ').Trim().TrimEnd([char[]]@([char]32, [char]46))
+    if ([string]::IsNullOrWhiteSpace($name) -or $name -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$') {
+        $name = "Recovered project"
+    }
+    if ($name.Length -gt 80) {
+        $name = $name.Substring(0, 80).TrimEnd([char[]]@([char]32, [char]46))
+    }
+    return $name
+}
+
+# 为不存在的旧 cwd 生成确定的会话到目标占位目录映射；此阶段不创建目录。
+function New-ProjectRehomePlan {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$SessionCwds,
+        [Parameter(Mandatory = $true)][string]$ProjectRoot
+    )
+
+    $resolvedRoot = Resolve-FullPath -PathValue $ProjectRoot
+    if (-not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
+        throw "Project root does not exist: $resolvedRoot"
+    }
+    Assert-PathWithinRootWithoutReparsePoint -Root $resolvedRoot -PathValue $resolvedRoot -Operation "Project root"
+
+    $missingCwds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($cwd in $SessionCwds.Values) {
+        $sourceCwd = [string]$cwd
+        if ([string]::IsNullOrWhiteSpace($sourceCwd) -or [System.IO.Directory]::Exists($sourceCwd)) { continue }
+        $missingCwds.Add($sourceCwd) | Out-Null
+    }
+
+    $cwdTargets = @{}
+    $nextSuffixByName = @{}
+    foreach ($sourceCwd in @($missingCwds | Sort-Object)) {
+        $baseName = ConvertTo-SafeProjectFolderName -SourceCwd $sourceCwd
+        $key = $baseName.ToLowerInvariant()
+        $suffix = if ($nextSuffixByName.ContainsKey($key)) { [int]$nextSuffixByName[$key] } else { 1 }
+        while ($true) {
+            $folderName = if ($suffix -eq 1) { $baseName } else { "{0}-{1}" -f $baseName, $suffix }
+            $candidate = Join-Path $resolvedRoot $folderName
+            Assert-PathWithinRootWithoutReparsePoint -Root $resolvedRoot -PathValue $candidate -Operation "Placeholder project"
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { break }
+            $suffix++
+        }
+        $cwdTargets[$sourceCwd] = [System.IO.Path]::GetFullPath($candidate)
+        $nextSuffixByName[$key] = $suffix + 1
+    }
+
+    $sessionTargets = @{}
+    foreach ($sessionId in $SessionCwds.Keys) {
+        $sourceCwd = [string]$SessionCwds[$sessionId]
+        if ($cwdTargets.ContainsKey($sourceCwd)) {
+            $sessionTargets[[string]$sessionId] = [string]$cwdTargets[$sourceCwd]
+        }
+    }
+    return [PSCustomObject]@{ Root = $resolvedRoot; SessionPaths = $sessionTargets }
 }
 
 # 兼容只需要会话 ID 的导出、恢复调用点。
@@ -1007,6 +1119,26 @@ public static class CodexHistorySqlite
     // 仅更新指定会话 ID，避免修改目标电脑已有的其他历史。
     public static int UpdateProviders(string databasePath, string provider, string[] sessionIds)
     {
+        string[] providers = new string[sessionIds.Length];
+        for (int index = 0; index < providers.Length; index++)
+        {
+            providers[index] = provider;
+        }
+        return UpdateThreadTextValues(databasePath, "model_provider", providers, sessionIds, "provider");
+    }
+
+    // 将指定会话的 cwd 同步到新电脑上的项目占位目录。
+    public static int UpdateCwds(string databasePath, string[] cwds, string[] sessionIds)
+    {
+        if (cwds.Length != sessionIds.Length)
+        {
+            throw new ArgumentException("Cwd values and session IDs must have the same length.");
+        }
+        return UpdateThreadTextValues(databasePath, "cwd", cwds, sessionIds, "cwd");
+    }
+
+    private static int UpdateThreadTextValues(string databasePath, string columnName, string[] values, string[] sessionIds, string operation)
+    {
         IntPtr database;
         int result = Open(databasePath, out database);
         if (result != SqliteOk)
@@ -1023,21 +1155,25 @@ public static class CodexHistorySqlite
             {
                 return 0;
             }
+            if (!ThreadColumnExists(database, columnName))
+            {
+                throw new InvalidOperationException("The threads table does not contain the " + columnName + " column.");
+            }
             Execute(database, "BEGIN IMMEDIATE");
             transactionStarted = true;
 
-            result = Prepare(database, "UPDATE threads SET model_provider = ?1 WHERE id = ?2", -1, out statement, IntPtr.Zero);
-            EnsureSuccess(database, result, "prepare provider update");
+            result = Prepare(database, "UPDATE threads SET " + columnName + " = ?1 WHERE id = ?2", -1, out statement, IntPtr.Zero);
+            EnsureSuccess(database, result, "prepare " + operation + " update");
 
             int updatedRows = 0;
-            foreach (string sessionId in sessionIds)
+            for (int index = 0; index < sessionIds.Length; index++)
             {
-                EnsureSuccess(database, BindText(statement, 1, provider, -1, SqliteTransient), "bind provider");
-                EnsureSuccess(database, BindText(statement, 2, sessionId, -1, SqliteTransient), "bind session id");
+                EnsureSuccess(database, BindText(statement, 1, values[index], -1, SqliteTransient), "bind " + operation);
+                EnsureSuccess(database, BindText(statement, 2, sessionIds[index], -1, SqliteTransient), "bind session id");
                 result = sqlite3_step(statement);
                 if (result != SqliteDone)
                 {
-                    throw new InvalidOperationException("SQLite provider update failed: " + GetError(database));
+                    throw new InvalidOperationException("SQLite " + operation + " update failed: " + GetError(database));
                 }
                 updatedRows += sqlite3_changes(database);
                 sqlite3_reset(statement);
@@ -1394,6 +1530,16 @@ public static class CodexHistorySqlite
         }
     }
 
+    private static bool ThreadColumnExists(IntPtr database, string columnName)
+    {
+        string[] columns = ReadThreadColumnSignature(database, "main").Split('\u001f');
+        foreach (string column in columns)
+        {
+            if (String.Equals(column, columnName, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
     // 把 SQLite 返回码转换为可诊断异常。
     private static void EnsureSuccess(IntPtr database, int result, string operation)
     {
@@ -1485,6 +1631,76 @@ function Update-ImportedProviderIndexes {
         }
     }
 
+    return $updatedRows
+}
+
+# 创建或复用计划中的占位目录，并记录哪些目录由本次恢复新建。
+function New-ProjectPlaceholders {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$FolderPaths
+    )
+
+    $createdByPath = @{}
+    foreach ($folderPath in @($FolderPaths | Sort-Object -Unique)) {
+        $target = [string]$folderPath
+        Assert-PathWithinRootWithoutReparsePoint -Root $ProjectRoot -PathValue $target -Operation "Placeholder project"
+        if (Test-Path -LiteralPath $target -PathType Leaf) {
+            throw "Placeholder project path is occupied by a file: $target"
+        }
+        if (Test-Path -LiteralPath $target -PathType Container) {
+            $createdByPath[$target] = $false
+            continue
+        }
+        [System.IO.Directory]::CreateDirectory($target) | Out-Null
+        Assert-PathWithinRootWithoutReparsePoint -Root $ProjectRoot -PathValue $target -Operation "Placeholder project"
+        $createdByPath[$target] = $true
+    }
+    return $createdByPath
+}
+
+# 只清理本次创建且仍为空的占位目录，不触碰用户原有目录或其中的文件。
+function Remove-UnusedProjectPlaceholders {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [Parameter(Mandatory = $true)][hashtable]$CreatedByPath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$UsedPaths
+    )
+
+    $used = [System.Collections.Generic.HashSet[string]]::new($UsedPaths, [System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($folderPath in @($CreatedByPath.Keys | Sort-Object -Descending)) {
+        if (-not [bool]$CreatedByPath[$folderPath] -or $used.Contains([string]$folderPath)) { continue }
+        Assert-PathWithinRootWithoutReparsePoint -Root $ProjectRoot -PathValue ([string]$folderPath) -Operation "Placeholder cleanup"
+        try { [System.IO.Directory]::Delete([string]$folderPath, $false) }
+        catch { Write-Warning "Could not remove an unused empty placeholder folder: $folderPath" }
+    }
+}
+
+# 将迁入会话的新 cwd 同步到所有兼容的本机线程索引。
+function Update-ImportedProjectIndexes {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [Parameter(Mandatory = $true)][hashtable]$SessionPaths
+    )
+
+    if ($SessionPaths.Count -eq 0) { return 0 }
+    Initialize-SqliteProviderUpdater
+    $sessionIds = @($SessionPaths.Keys | Sort-Object)
+    $cwds = @($sessionIds | ForEach-Object { [string]$SessionPaths[$_] })
+    $updatedRows = 0
+    foreach ($directory in @($TargetRoot, (Join-Path $TargetRoot "sqlite"))) {
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
+        foreach ($databaseFile in Get-ChildItem -LiteralPath $directory -File -Filter "state_*.sqlite" -ErrorAction SilentlyContinue) {
+            try {
+                Assert-PathWithinRootWithoutReparsePoint -Root $TargetRoot -PathValue $databaseFile.FullName `
+                    -Operation "SQLite project update"
+                $updatedRows += [CodexHistorySqlite]::UpdateCwds($databaseFile.FullName, $cwds, $sessionIds)
+            }
+            catch {
+                Write-Warning "Could not update project references in $($databaseFile.FullName): $($_.Exception.Message)"
+            }
+        }
+    }
     return $updatedRows
 }
 
@@ -1795,6 +2011,7 @@ function Import-HistoryArchive {
         [Parameter(Mandatory = $true)][bool]$ForceAppStateRestore,
         [Parameter(Mandatory = $true)][bool]$RemapModelProvider,
         [AllowEmptyString()][string]$RequestedModelProvider,
+        [AllowEmptyString()][string]$RequestedProjectRoot,
         [AllowNull()][System.Collections.Generic.HashSet[string]]$SelectedSessionIds
     )
 
@@ -1804,6 +2021,8 @@ function Import-HistoryArchive {
 
     Write-ProgressEvent -Percent 5 -Stage "ValidatingArchive"
     $validation = Expand-AndValidateArchive -SourceArchive $SourceArchive
+    $projectPlan = $null
+    $projectFolderStatus = @{}
     try {
         $partialProperty = $validation.Manifest.PSObject.Properties["isPartialHistory"]
         $archiveIsPartial = $null -ne $partialProperty -and [bool]$partialProperty.Value
@@ -1816,6 +2035,7 @@ function Import-HistoryArchive {
         $providerRecordsSkipped = 0
         $providerRewriteFiles = @{}
         $sessionIdsByRelativePath = @{}
+        $allSessionCwdsById = @{}
         if ($RemapModelProvider) {
             $resolvedModelProvider = Resolve-TargetModelProvider -TargetRoot $TargetRoot -RequestedProvider $RequestedModelProvider
             $rewriteRoot = Join-Path $validation.TemporaryRoot "provider-rewritten"
@@ -1826,13 +2046,17 @@ function Import-HistoryArchive {
                 }
 
                 $sourceFile = Join-Path $validation.DataRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+                $metadata = Get-HistorySessionMetadata -SourceFile $sourceFile
+                if (-not [string]::IsNullOrWhiteSpace([string]$metadata.Id)) {
+                    $allSessionCwdsById[[string]$metadata.Id] = [string]$metadata.Cwd
+                }
+                if ($null -ne $SelectedSessionIds -and
+                    ([string]::IsNullOrWhiteSpace([string]$metadata.Id) -or -not $SelectedSessionIds.Contains([string]$metadata.Id))) {
+                    continue
+                }
                 $rewrittenFile = Join-Path $rewriteRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
                 $rewrite = New-ProviderRewrittenSessionFile -SourceFile $sourceFile -DestinationFile $rewrittenFile `
                     -Provider $resolvedModelProvider
-                if ($null -ne $SelectedSessionIds -and
-                    ([string]::IsNullOrWhiteSpace($rewrite.SessionId) -or -not $SelectedSessionIds.Contains([string]$rewrite.SessionId))) {
-                    continue
-                }
                 if (-not [string]::IsNullOrWhiteSpace($rewrite.SessionId)) {
                     $sessionIdsByRelativePath[$relativePath] = [string]$rewrite.SessionId
                 }
@@ -1852,7 +2076,11 @@ function Import-HistoryArchive {
                 }
 
                 $sourceFile = Join-Path $validation.DataRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-                $sessionId = Get-HistorySessionId -SourceFile $sourceFile
+                $metadata = Get-HistorySessionMetadata -SourceFile $sourceFile
+                $sessionId = [string]$metadata.Id
+                if (-not [string]::IsNullOrWhiteSpace($sessionId)) {
+                    $allSessionCwdsById[$sessionId] = [string]$metadata.Cwd
+                }
                 if ($null -ne $SelectedSessionIds -and
                     ([string]::IsNullOrWhiteSpace($sessionId) -or -not $SelectedSessionIds.Contains($sessionId))) {
                     continue
@@ -1876,6 +2104,29 @@ function Import-HistoryArchive {
         }
         Assert-PathWithinRootWithoutReparsePoint -Root $TargetRoot -PathValue $TargetRoot -Operation "Import destination"
 
+        $projectRewriteFiles = @{}
+        if (-not [string]::IsNullOrWhiteSpace($RequestedProjectRoot)) {
+            $projectPlan = New-ProjectRehomePlan -SessionCwds $allSessionCwdsById -ProjectRoot $RequestedProjectRoot
+            $rewriteRoot = Join-Path $validation.TemporaryRoot "project-rewritten"
+            foreach ($relativePath in @($sessionIdsByRelativePath.Keys)) {
+                $sessionId = [string]$sessionIdsByRelativePath[$relativePath]
+                if (-not $projectPlan.SessionPaths.ContainsKey($sessionId)) { continue }
+                $sourceFile = if ($providerRewriteFiles.ContainsKey($relativePath)) {
+                    [string]$providerRewriteFiles[$relativePath].SourceFile
+                }
+                else {
+                    Join-Path $validation.DataRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+                }
+                $rewrittenFile = Join-Path $rewriteRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+                $rewrite = New-CwdRewrittenSessionFile -SourceFile $sourceFile -DestinationFile $rewrittenFile `
+                    -Cwd ([string]$projectPlan.SessionPaths[$sessionId])
+                if (-not $rewrite.MetadataFound) {
+                    throw "Selected session does not contain cwd metadata: $sessionId"
+                }
+                $projectRewriteFiles[$relativePath] = $rewrite
+            }
+        }
+
         $hadHistory = Test-HasExistingHistory -TargetRoot $TargetRoot
         $backupPath = ""
         if (Test-HasMigratableData -TargetRoot $TargetRoot) {
@@ -1897,6 +2148,15 @@ function Import-HistoryArchive {
         $restoreAppStateNow = ($ForceAppStateRestore -or (-not $hadHistory)) -and $null -eq $SelectedSessionIds
         $importedSessionIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $importedSessionPaths = @{}
+        $importedProjectPaths = @{}
+        if ($null -ne $projectPlan) {
+            Write-ProgressEvent -Percent 46 -Stage "CreatingProjectFolders"
+            $selectedProjectPaths = @($sessionIdsByRelativePath.Values | ForEach-Object {
+                $sessionId = [string]$_
+                if ($projectPlan.SessionPaths.ContainsKey($sessionId)) { [string]$projectPlan.SessionPaths[$sessionId] }
+            } | Sort-Object -Unique)
+            $projectFolderStatus = New-ProjectPlaceholders -ProjectRoot $projectPlan.Root -FolderPaths $selectedProjectPaths
+        }
 
         $manifestEntries = @($validation.Manifest.files)
         $processedEntries = 0
@@ -1926,6 +2186,9 @@ function Import-HistoryArchive {
                 $rewrite = $providerRewriteFiles[$relativePath]
                 $sourceFile = $rewrite.SourceFile
             }
+            if ($projectRewriteFiles.ContainsKey($relativePath)) {
+                $sourceFile = $projectRewriteFiles[$relativePath].SourceFile
+            }
             $destinationFile = Join-Path $TargetRoot $relativePath.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
             $overwrite = $category -eq "appState"
             $result = Copy-ImportedFile -SourceFile $sourceFile -DestinationFile $destinationFile `
@@ -1946,6 +2209,9 @@ function Import-HistoryArchive {
                 $sessionId = [string]$sessionIdsByRelativePath[$relativePath]
                 $importedSessionIds.Add($sessionId) | Out-Null
                 $importedSessionPaths[$sessionId] = $destinationFile
+                if ($null -ne $projectPlan -and $projectPlan.SessionPaths.ContainsKey($sessionId)) {
+                    $importedProjectPaths[$sessionId] = [string]$projectPlan.SessionPaths[$sessionId]
+                }
             }
         }
 
@@ -1965,6 +2231,19 @@ function Import-HistoryArchive {
         else {
             0
         }
+        $projectIndexRowsUpdated = Update-ImportedProjectIndexes -TargetRoot $TargetRoot -SessionPaths $importedProjectPaths
+        $usedProjectFolders = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($projectPath in $importedProjectPaths.Values) { $usedProjectFolders.Add([string]$projectPath) | Out-Null }
+        $projectFoldersCreated = 0
+        $projectFoldersReused = 0
+        foreach ($projectPath in $usedProjectFolders) {
+            if ([bool]$projectFolderStatus[$projectPath]) { $projectFoldersCreated++ }
+            else { $projectFoldersReused++ }
+        }
+        if ($null -ne $projectPlan) {
+            Remove-UnusedProjectPlaceholders -ProjectRoot $projectPlan.Root -CreatedByPath $projectFolderStatus `
+                -UsedPaths @($usedProjectFolders)
+        }
 
         return [PSCustomObject]@{
             CodexHome = $TargetRoot
@@ -1979,7 +2258,17 @@ function Import-HistoryArchive {
             ProviderRecordsRewritten = $providerRecordsRewritten
             ProviderRecordsSkipped = $providerRecordsSkipped
             ProviderIndexRowsUpdated = $providerIndexRowsUpdated
+            ProjectFoldersCreated = $projectFoldersCreated
+            ProjectFoldersReused = $projectFoldersReused
+            ProjectSessionsRehomed = $importedProjectPaths.Count
+            ProjectIndexRowsUpdated = $projectIndexRowsUpdated
         }
+    }
+    catch {
+        if ($null -ne $projectPlan -and $projectFolderStatus.Count -gt 0) {
+            Remove-UnusedProjectPlaceholders -ProjectRoot $projectPlan.Root -CreatedByPath $projectFolderStatus -UsedPaths @()
+        }
+        throw
     }
     finally {
         Remove-SafeTemporaryDirectory -PathValue $validation.TemporaryRoot
@@ -2044,12 +2333,14 @@ try {
             $resolvedArchive = Resolve-FullPath -PathValue $ArchivePath
             $result = Import-HistoryArchive -SourceArchive $resolvedArchive -TargetRoot $resolvedCodexHome `
                 -ForceAppStateRestore:$RestoreAppState -RemapModelProvider:$RewriteModelProvider `
-                -RequestedModelProvider $TargetModelProvider -SelectedSessionIds $selectedSessionIds
+                -RequestedModelProvider $TargetModelProvider -RequestedProjectRoot $ProjectRoot `
+                -SelectedSessionIds $selectedSessionIds
             Write-ProgressEvent -Percent 100 -Stage "Complete"
-            Write-Host ("import complete`tcodexHome={0}`tcopied={1}`tunchanged={2}`tconflicts={3}`tindexAdded={4}`tthreadIndexAdded={5}`tappState={6}`tprovider={7}`tproviderFiles={8}`tproviderIndexRows={9}`tproviderSkipped={10}" -f `
+            Write-Host ("import complete`tcodexHome={0}`tcopied={1}`tunchanged={2}`tconflicts={3}`tindexAdded={4}`tthreadIndexAdded={5}`tappState={6}`tprovider={7}`tproviderFiles={8}`tproviderIndexRows={9}`tproviderSkipped={10}`tprojectFoldersCreated={11}`tprojectFoldersReused={12}`tprojectSessionsRehomed={13}`tprojectIndexRows={14}" -f `
                 $result.CodexHome, $result.CopiedFiles, $result.UnchangedFiles, `
                 $result.ConflictingFilesKeptAtDestination, $result.IndexEntriesAdded, $result.ThreadIndexRowsAdded, $result.AppStateFilesRestored, `
-                $result.ModelProvider, $result.ProviderRecordsRewritten, $result.ProviderIndexRowsUpdated, $result.ProviderRecordsSkipped)
+                $result.ModelProvider, $result.ProviderRecordsRewritten, $result.ProviderIndexRowsUpdated, $result.ProviderRecordsSkipped, `
+                $result.ProjectFoldersCreated, $result.ProjectFoldersReused, $result.ProjectSessionsRehomed, $result.ProjectIndexRowsUpdated)
             if (-not [string]::IsNullOrWhiteSpace($result.BackupArchive)) {
                 Write-Host ("backup created`tarchive={0}" -f $result.BackupArchive)
             }

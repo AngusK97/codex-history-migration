@@ -34,8 +34,11 @@ Restore and adapt imported conversations to the provider configured on the desti
 powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 `
   -Mode Import `
   -ArchivePath "E:\codex-history.zip" `
-  -RewriteModelProvider
+  -RewriteModelProvider `
+  -ProjectRoot "E:\Projects"
 ```
+
+`-ProjectRoot` is optional. It creates empty folders only for imported conversations whose recorded working directory is missing on this computer, then rewrites those conversations and compatible SQLite thread rows to the new paths.
 
 ### Set a Provider
 
@@ -145,6 +148,8 @@ Archives are not encrypted and contain complete conversation content. Export als
 - A rollback ZIP is created before writing whenever the destination already contains supported data.
 - Conflicting same-name conversation files remain unchanged at the destination and are reported as conflicts.
 - `-RewriteModelProvider` updates only successfully imported conversations and corresponding newly merged SQLite thread rows.
+- `-ProjectRoot` creates deterministic empty placeholder folders for missing recorded working directories and rewrites only successfully imported conversations. Existing working directories are kept. Name collisions use stable suffixes such as `Project-2`, and repeated restores reuse the same folders.
+- Placeholder folders do not restore source code, Git history, ignored files, or uncommitted changes. Restore or clone project contents separately.
 - Incompatible SQLite thread layouts are skipped with a warning while transcript and title-index restoration continues.
 - Without `-TargetModelProvider`, the provider is resolved from the active profile, root-level `model_provider`, and finally the `openai` default.
 
@@ -160,6 +165,7 @@ Archives are not encrypted and contain complete conversation content. Export als
 | `-RestoreAppState` | Replace matching destination desktop-state files after creating a rollback backup. |
 | `-RewriteModelProvider` | Adapt imported history to the destination provider. Enabled by default in the GUI. |
 | `-TargetModelProvider` | Explicit destination provider ID. Otherwise resolve it from `config.toml`. |
+| `-ProjectRoot` | Existing root folder under which empty placeholders are created for missing imported project paths. Opt-in in the GUI. |
 | `-SessionSelectionFile` | UTF-8 file with one conversation ID per line. Required for management operations. |
 | `-AllowRunningCodex` | Bypass the process check. Intended only for isolated tests. |
 | `-Force` | Permit replacing an existing export ZIP. Does not change import conflict handling. |
