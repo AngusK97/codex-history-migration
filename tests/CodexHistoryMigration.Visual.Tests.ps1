@@ -55,6 +55,7 @@ Assert-True ($theme.Metrics.RadiusMedium -ge 4 -and $theme.Metrics.RadiusMedium 
 
 $uiContent = Get-Content -LiteralPath $uiPath -Raw
 Assert-True ($uiContent -match 'Import-PowerShellDataFile') "The GUI must load the semantic theme file."
+Assert-True ($uiContent -match '(?m)^\$script:Language\s*=\s*"en"\s*$') "The GUI must start in English by default."
 Assert-True ($uiContent -match 'New-InputFrame') "The GUI must provide a shared focused input frame."
 Assert-True ($uiContent -match 'ProgressFill') "The GUI must use the themed deterministic progress fill."
 Assert-True ($uiContent -match '\$focusBorderColor\s*=\s*\$script:Palette\.Accent') "Paint callbacks must capture their colors before entering a closure."
