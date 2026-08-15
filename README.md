@@ -218,7 +218,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\CodexHistoryMigration.ps1 
 运行 PowerShell 语法检查和回归测试：
 
 ```powershell
-$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1', 'tests\CodexHistoryMigration.Selection.Tests.ps1', 'tests\CodexHistoryMigration.Management.Tests.ps1', 'tests\CodexHistoryMigration.Launcher.Tests.ps1'
+$files = 'CodexHistoryMigration.ps1', 'CodexHistoryMigration.UI.ps1', 'tests\CodexHistoryMigration.Regression.Tests.ps1', 'tests\CodexHistoryMigration.Selection.Tests.ps1', 'tests\CodexHistoryMigration.Management.Tests.ps1', 'tests\CodexHistoryMigration.Launcher.Tests.ps1', 'tests\CodexHistoryMigration.Visual.Tests.ps1'
 foreach ($file in $files) {
     $tokens = $null
     $errors = $null
@@ -229,6 +229,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigratio
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Selection.Tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Management.Tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Launcher.Tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\CodexHistoryMigration.Visual.Tests.ps1
 ```
 
 ## 边界
