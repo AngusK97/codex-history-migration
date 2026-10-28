@@ -116,3 +116,7 @@ CLI 示例、归档内容、恢复规则、参数、故障处理和项目验证�
 ## 安全和许可证
 
 请按照 [SECURITY.md](SECURITY.md) 私下报告安全问题。本项目使用 [MIT License](LICENSE)。
+
+## 压缩过长的会话
+
+在切换 Provider 前，通过“管理 → 压缩上下文”处理一个选中的旧 JSONL 会话。新增功能需要 Python 3.9+；先离线预览，再调用你明确配置的 API 服务生成摘要，保留预算内的最近对话、完整原文及恢复备份。压缩完成后再设置 Provider。详见 [COMPACTION.md](docs/COMPACTION.md) 中的中文说明与命令。

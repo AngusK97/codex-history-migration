@@ -299,6 +299,53 @@ $script:MonoFontFamily = Resolve-FontFamily ([string[]]$script:Theme.Fonts.Monos
 $script:NavigationFont = [System.Drawing.Font]::new($script:UiFontFamily, 9.5)
 $script:NavigationActiveFont = [System.Drawing.Font]::new($script:UiFontFamily, 9.5, [System.Drawing.FontStyle]::Bold)
 
+$script:Strings["zh"]["compactTitle"] = "压缩上下文…"
+$script:Strings["en"]["compactTitle"] = "Compress context…"
+$script:Strings["zh"]["compactSelectOne"] = "请明确选择且仅选择一个会话。"
+$script:Strings["en"]["compactSelectOne"] = "Explicitly select exactly one conversation."
+$script:Strings["zh"]["compactIntro"] = "关闭 Codex 后操作。先离线预览，再发送旧上下文生成有损摘要。完整历史将备份，原始记录保留；不会自动更改 Provider。"
+$script:Strings["en"]["compactIntro"] = "Close Codex first. Preview offline, then send older context for a lossy summary. Full history is backed up and the original records are preserved. Provider is not changed automatically."
+$script:Strings["zh"]["compactDetecting"] = "正在检测 Python 3.9+…"
+$script:Strings["en"]["compactDetecting"] = "Detecting Python 3.9+…"
+$script:Strings["zh"]["compactNoPython"] = "需要 Python 3.9+（py -3、python3 或 python）。安装后重新打开窗口。"
+$script:Strings["en"]["compactNoPython"] = "Python 3.9+ required (py -3, python3 or python). Install it, then reopen this dialog."
+$script:Strings["zh"]["compactBase"] = "API 基础地址（HTTPS）"
+$script:Strings["en"]["compactBase"] = "API base URL (HTTPS)"
+$script:Strings["zh"]["compactModel"] = "摘要模型名称"
+$script:Strings["en"]["compactModel"] = "Summary model name"
+$script:Strings["zh"]["compactEnv"] = "API 密钥环境变量名（非密钥）"
+$script:Strings["en"]["compactEnv"] = "API key variable NAME (not the key)"
+$script:Strings["zh"]["compactBudget"] = "目标上下文预算（估算 token）"
+$script:Strings["en"]["compactBudget"] = "Context budget (estimated tokens)"
+$script:Strings["zh"]["compactRecent"] = "保留最近的用户轮次"
+$script:Strings["en"]["compactRecent"] = "Recent user turns to retain"
+$script:Strings["zh"]["compactPreview"] = "离线预览"
+$script:Strings["en"]["compactPreview"] = "Preview offline"
+$script:Strings["zh"]["compactRun"] = "确认并压缩…"
+$script:Strings["en"]["compactRun"] = "Confirm and compress…"
+$script:Strings["zh"]["compactNeedsPreview"] = "设置已变更，请重新离线预览。"
+$script:Strings["en"]["compactNeedsPreview"] = "Settings changed. Run an offline preview again."
+$script:Strings["zh"]["compactNumbers"] = "预算须为 4096–2000000 的整数，最近轮次须为 0–100 的整数。"
+$script:Strings["en"]["compactNumbers"] = "Budget must be 4096–2000000; recent turns must be 0–100 (integers)."
+$script:Strings["zh"]["compactMissing"] = "缺少 codex_history_compact.py。"
+$script:Strings["en"]["compactMissing"] = "Missing codex_history_compact.py."
+$script:Strings["zh"]["compactUrl"] = "请输入不含凭据、查询或片段的 HTTPS API 基础地址。"
+$script:Strings["en"]["compactUrl"] = "Enter an HTTPS API base URL without credentials, query or fragment."
+$script:Strings["zh"]["compactCredentials"] = "请填写模型及有效的环境变量名。不要粘贴密钥。"
+$script:Strings["en"]["compactCredentials"] = "Enter a model and a valid environment variable name. Do not paste a key."
+$script:Strings["zh"]["compactConfirm"] = "旧会话文本将发送到：{0}`n模型：{1}`n`n摘要是有损的，可能遗漏细节。完整历史将备份，原始记录保留，并在同一会话追加压缩检查点。备份包含敏感内容且未加密。不会自动更改 Provider。`n`n是否继续？"
+$script:Strings["en"]["compactConfirm"] = "Older conversation text will be sent to: {0}`nModel: {1}`n`nThe summary is lossy and may omit details. Full history will be backed up, original records preserved, and a compacted checkpoint appended to the same conversation. Backups contain sensitive text and are not encrypted. Provider will not change automatically.`n`nContinue?"
+$script:Strings["zh"]["compactWorking"] = "处理中，请等待。网络摘要可能需要几分钟。"
+$script:Strings["en"]["compactWorking"] = "Working. Network summarization may take several minutes."
+$script:Strings["zh"]["compactWait"] = "操作进行中。请等待完成后关闭，避免中断备份或写入。"
+$script:Strings["en"]["compactWait"] = "Operation in progress. Wait for completion before closing to avoid interrupting backup or writes."
+$script:Strings["zh"]["compactExitError"] = "压缩助手退出，代码 {0}。"
+$script:Strings["en"]["compactExitError"] = "Compaction helper exited with code {0}."
+$script:Strings["zh"]["compactInvalidResult"] = "压缩助手未返回有效结果。"
+$script:Strings["en"]["compactInvalidResult"] = "Compaction helper did not return a valid result."
+$script:Strings["zh"]["compactDone"] = "上下文已压缩。请重新选择该会话，再使用现有的设置 Provider 操作。"
+$script:Strings["en"]["compactDone"] = "Context compressed. Select this conversation again, then use the existing Set Provider action."
+
 function T {
     param([Parameter(Mandatory = $true)][string]$Key)
     if ($script:Strings[$script:Language].ContainsKey($Key)) { return [string]$script:Strings[$script:Language][$Key] }
@@ -555,6 +602,7 @@ function Update-Layout {
     $script:ManagementActionLabel.Visible = $isManage
     $script:SetProviderActionButton.Visible = $isManage
     $script:DeleteActionButton.Visible = $isManage
+    $script:CompactButton.Visible = $isManage -and $script:SelectedManagementAction -eq "SetProvider"
     $script:DestinationLabel.Location = [System.Drawing.Point]::new(36, $(if ($isManage) { 300 } else { 204 }))
     $script:DestinationInputFrame.Location = [System.Drawing.Point]::new(36, $(if ($isManage) { 328 } else { 232 }))
     $script:DestinationLabel.Visible = -not $isManage -or $script:SelectedManagementAction -eq "SetProvider"
@@ -583,6 +631,7 @@ function Update-Language {
     $script:ManagementActionLabel.Text = T "managementAction"
     $script:SetProviderActionButton.Text = T "setProvider"
     $script:DeleteActionButton.Text = T "deleteSessions"
+    $script:CompactButton.Text = T "compactTitle"
     $script:SessionsLabel.Text = T "sessions"
     $script:ChooseSessionsButton.Text = T "chooseSessions"
     $script:HistoryOnlyCheckBox.Text = T "historyOnly"
@@ -720,6 +769,204 @@ function Invoke-SessionList {
         $script:MainForm.UseWaitCursor = $false
         $script:StatusLabel.Text = T $script:CurrentStatusKey
     }
+}
+
+# The dialog owns its child process and drains both pipes asynchronously. It never
+# edits history itself or includes a credential value in arguments or settings.
+function Show-CompactionDialog {
+    if ($null -ne $script:ActiveProcess) { return }
+    if ($null -eq $script:SelectedSessionIds -or @($script:SelectedSessionIds).Count -ne 1 -or [string]::IsNullOrWhiteSpace($script:SelectedSessionIds[0])) {
+        Show-Message (T 'compactSelectOne') 'compactTitle' 'Information'
+        return
+    }
+    $homePath = $script:SourceTextBox.Text.Trim()
+    $sessionId = [string]$script:SelectedSessionIds[0]
+    $companion = Join-Path $PSScriptRoot 'codex_history_compact.py'
+    $dialog = [System.Windows.Forms.Form]::new()
+    $dialog.Text = T 'compactTitle'
+    $dialog.StartPosition = 'CenterParent'
+    $dialog.ClientSize = [System.Drawing.Size]::new(720, 650)
+    $dialog.FormBorderStyle = 'FixedDialog'
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+    $dialog.ShowIcon = $false
+    $dialog.AutoScaleMode = 'Dpi'
+    $dialog.Font = $script:MainForm.Font
+    $dialog.BackColor = $script:Palette.Canvas
+    $intro = New-UiLabel (T 'compactIntro') 24 16 672 72
+    $runtimeLabel = New-UiLabel (T 'compactDetecting') 24 88 672 28
+    $dialog.Controls.AddRange(@($intro, $runtimeLabel))
+    $fields = @{}
+    $row = 0
+    foreach ($spec in @(
+        @('base', 'compactBase', 'https://api.openai.com/v1'),
+        @('model', 'compactModel', ''),
+        @('env', 'compactEnv', 'OPENAI_API_KEY'),
+        @('budget', 'compactBudget', '16000'),
+        @('recent', 'compactRecent', '2')
+    )) {
+        $label = New-UiLabel (T $spec[1]) 24 (128 + $row * 40) 244 30
+        $field = [System.Windows.Forms.TextBox]::new()
+        $field.Location = [System.Drawing.Point]::new(272, (128 + $row * 40))
+        $field.Size = [System.Drawing.Size]::new(424, 28)
+        $field.BackColor = $script:Palette.Field
+        $field.ForeColor = $script:Palette.Text
+        $field.Text = $spec[2]
+        $fields[$spec[0]] = $field
+        $dialog.Controls.AddRange(@($label, $field))
+        $row++
+    }
+    $resultBox = [System.Windows.Forms.TextBox]::new()
+    $resultBox.Location = [System.Drawing.Point]::new(24, 340)
+    $resultBox.Size = [System.Drawing.Size]::new(672, 236)
+    $resultBox.Multiline = $true
+    $resultBox.ReadOnly = $true
+    $resultBox.ScrollBars = 'Vertical'
+    $resultBox.BackColor = $script:Palette.Surface
+    $resultBox.ForeColor = $script:Palette.Text
+    $previewButton = New-SegmentButton 24 594 200 36
+    $previewButton.Text = T 'compactPreview'
+    $compactButton = New-SegmentButton 236 594 240 36
+    $compactButton.Text = T 'compactRun'
+    $closeButton = New-SegmentButton 568 594 128 36
+    $closeButton.Text = T 'cancel'
+    Set-SegmentState $previewButton $false
+    Set-SegmentState $compactButton $true
+    Set-SegmentState $closeButton $false
+    $dialog.Controls.AddRange(@($resultBox, $previewButton, $compactButton, $closeButton))
+    $state = @{ Process = $null; Out = $null; Err = $null; Mode = ''; Runtime = $null; Prefix = @(); Candidate = 0; Preview = $false; Completed = $false; Started = [DateTime]::UtcNow }
+    $candidates = @(@('py', '-3'), @('python3'), @('python'))
+    $refresh = {
+        $busy = $null -ne $state.Process
+        foreach ($field in $fields.Values) { $field.Enabled = -not $busy -and -not $state.Completed }
+        $previewButton.Enabled = -not $busy -and $null -ne $state.Runtime -and -not $state.Completed
+        $compactButton.Enabled = $previewButton.Enabled -and $state.Preview
+        $closeButton.Enabled = -not $busy
+    }
+    $startChild = {
+        param([string]$Executable, [string[]]$Arguments, [string]$Mode)
+        $info = [System.Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $Executable
+        $info.Arguments = ($Arguments | ForEach-Object { ConvertTo-QuotedProcessArgument $_ }) -join ' '
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        $info.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $info.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+        $info.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $info
+        try {
+            if (-not $process.Start()) { throw 'Could not start Python.' }
+            $state.Process = $process
+            $state.Out = $process.StandardOutput.ReadToEndAsync()
+            $state.Err = $process.StandardError.ReadToEndAsync()
+            $state.Mode = $Mode
+            $state.Started = [DateTime]::UtcNow
+            & $refresh
+        }
+        catch { $process.Dispose(); throw }
+    }
+    $detect = {
+        $state.Runtime = $null
+        while ($state.Candidate -lt $candidates.Count) {
+            $candidate = $candidates[$state.Candidate]
+            $state.Candidate++
+            $command = Get-Command $candidate[0] -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -eq $command) { continue }
+            $prefix = @($candidate | Select-Object -Skip 1)
+            try {
+                & $startChild $command.Source ($prefix + @('-c', 'import sys; print(sys.version.split()[0]); sys.exit(0 if sys.version_info >= (3,9) else 1)')) 'detect'
+                $state.Runtime = $command.Source
+                $state.Prefix = $prefix
+                return
+            }
+            catch { $state.Runtime = $null }
+        }
+        $runtimeLabel.Text = T 'compactNoPython'
+        & $refresh
+    }
+    $invalidate = { $state.Preview = $false; $resultBox.Text = T 'compactNeedsPreview'; & $refresh }
+    foreach ($field in $fields.Values) { $field.Add_TextChanged($invalidate) }
+    $launch = {
+        param([string]$Mode)
+        try {
+            $budget = 0
+            $recent = 0
+            if (-not [int]::TryParse($fields.budget.Text, [ref]$budget) -or $budget -lt 4096 -or $budget -gt 2000000 -or
+                -not [int]::TryParse($fields.recent.Text, [ref]$recent) -or $recent -lt 0 -or $recent -gt 100) { throw (T 'compactNumbers') }
+            if (-not (Test-Path -LiteralPath $companion -PathType Leaf)) { throw (T 'compactMissing') }
+            $arguments = $state.Prefix + @($companion, $Mode, '--codex-home', $homePath, '--session-id', $sessionId, '--budget', [string]$budget, '--recent-turns', [string]$recent)
+            if ($Mode -eq 'compact') {
+                if (-not $state.Preview) { throw (T 'compactNeedsPreview') }
+                $base = $fields.base.Text.Trim()
+                $model = $fields.model.Text.Trim()
+                $envName = $fields.env.Text.Trim()
+                $uri = $null
+                if (-not [Uri]::TryCreate($base, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -ne 'https' -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw (T 'compactUrl') }
+                if ([string]::IsNullOrWhiteSpace($model) -or $envName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw (T 'compactCredentials') }
+                $confirmation = (T 'compactConfirm') -f $base, $model
+                if ([System.Windows.Forms.MessageBox]::Show($dialog, $confirmation, (T 'compactTitle'), 'YesNo', 'Warning', 'Button2') -ne 'Yes') { return }
+                $arguments += @('--base-url', $base, '--model', $model, '--api-key-env', $envName)
+            }
+            $state.Preview = $false
+            $resultBox.Text = T 'compactWorking'
+            & $startChild $state.Runtime $arguments $Mode
+        }
+        catch { $resultBox.Text = $_.Exception.Message; Write-UiLog $_.Exception.Message; & $refresh }
+    }
+    $previewButton.Add_Click({ & $launch 'preview' })
+    $compactButton.Add_Click({ & $launch 'compact' })
+    $closeButton.Add_Click({ $dialog.Close() })
+    $dialog.Add_FormClosing({
+        param($sender, $eventArgs)
+        if ($null -ne $state.Process) { $eventArgs.Cancel = $true; $resultBox.Text = T 'compactWait' }
+    })
+    $timer = [System.Windows.Forms.Timer]::new()
+    $timer.Interval = 150
+    $timer.Add_Tick({
+        if ($null -eq $state.Process) { return }
+        if (-not $state.Process.HasExited) {
+            if ($state.Mode -eq 'detect' -and ([DateTime]::UtcNow - $state.Started).TotalSeconds -gt 5) {
+                try { $state.Process.Kill() } catch { }
+            }
+            return
+        }
+        if (-not $state.Out.IsCompleted -or -not $state.Err.IsCompleted) { return }
+        $exitCode = $state.Process.ExitCode
+        $output = $state.Out.Result
+        $errorOutput = $state.Err.Result
+        $state.Process.Dispose()
+        $state.Process = $null
+        if ($state.Mode -eq 'detect') {
+            if ($exitCode -eq 0) { $runtimeLabel.Text = 'Python ' + $output.Trim(); & $refresh }
+            else { & $detect }
+            return
+        }
+        try {
+            if ($exitCode -ne 0) {
+                if ([string]::IsNullOrWhiteSpace($errorOutput)) { throw ((T 'compactExitError') -f $exitCode) }
+                throw $errorOutput.Trim()
+            }
+            $result = $output | ConvertFrom-Json
+            if ($null -eq $result) { throw (T 'compactInvalidResult') }
+            $resultBox.Text = ($result | ConvertTo-Json -Depth 12)
+            if ($state.Mode -eq 'preview') { $state.Preview = $true }
+            else {
+                $state.Completed = $true
+                $resultBox.Text = (T 'compactDone') + "`r`n`r`n" + $resultBox.Text
+                Write-UiLog (T 'compactDone')
+                Reset-SessionSelection
+            }
+        }
+        catch { $state.Preview = $false; $resultBox.Text = $_.Exception.Message; Write-UiLog $_.Exception.Message }
+        & $refresh
+    })
+    & $refresh
+    $dialog.Add_Shown({ & $detect; $timer.Start() })
+    try { $dialog.ShowDialog($script:MainForm) | Out-Null }
+    finally { $timer.Stop(); $timer.Dispose(); $dialog.Dispose() }
 }
 
 function Show-SessionPicker {
@@ -1010,7 +1257,7 @@ function Set-UiBusy {
     foreach ($control in @($script:RunButton, $script:ExportModeButton, $script:ImportModeButton, $script:ManageModeButton, $script:ChineseButton, $script:EnglishButton,
         $script:SourceTextBox, $script:DestinationTextBox, $script:SourceBrowseButton, $script:DestinationBrowseButton, $script:ChooseSessionsButton,
         $script:AdvancedButton, $script:HistoryOnlyCheckBox, $script:IncludeArtifactsCheckBox, $script:RewriteProviderCheckBox,
-        $script:CreateProjectPlaceholdersCheckBox, $script:ProjectRootBrowseButton, $script:SetProviderActionButton, $script:DeleteActionButton)) {
+        $script:CreateProjectPlaceholdersCheckBox, $script:ProjectRootBrowseButton, $script:SetProviderActionButton, $script:DeleteActionButton, $script:CompactButton)) {
         $control.Enabled = -not $Busy
     }
     $partial = $null -ne $script:SelectedSessionIds -or ($script:SelectedMode -eq "Import" -and $script:ArchiveIsPartial)
@@ -1241,6 +1488,8 @@ $script:ManagementActionLabel = New-UiLabel "" 36 204 260
 $script:ManagementActionLabel.Font = [System.Drawing.Font]::new($script:UiFontFamily, 9.25, [System.Drawing.FontStyle]::Bold)
 $script:SetProviderActionButton = New-SegmentButton 36 232 180 38
 $script:DeleteActionButton = New-SegmentButton 224 232 180 38
+$script:CompactButton = New-SegmentButton 416 232 248 38
+Set-SegmentState $script:CompactButton $false
 
 $script:DestinationLabel = New-UiLabel "" 36 204 280
 $script:DestinationLabel.Font = [System.Drawing.Font]::new($script:UiFontFamily, 9.25, [System.Drawing.FontStyle]::Bold)
@@ -1346,7 +1595,7 @@ $script:AdvancedPanel.Controls.AddRange(@($script:ExportOptionsPanel, $script:Im
 
 $script:BodyPanel.Controls.AddRange(@(
     $script:SourceLabel, $script:SourceInputFrame, $script:SessionsLabel, $script:SessionScopePanel,
-    $script:ManagementActionLabel, $script:SetProviderActionButton, $script:DeleteActionButton,
+    $script:ManagementActionLabel, $script:SetProviderActionButton, $script:DeleteActionButton, $script:CompactButton,
     $script:DestinationLabel, $script:DestinationInputFrame, $script:AdvancedButton, $script:AdvancedPanel
 ))
 
@@ -1476,6 +1725,7 @@ $script:ImportModeButton.Add_Click({ Set-SelectedMode "Import" })
 $script:ManageModeButton.Add_Click({ Set-SelectedMode "Manage" })
 $script:SetProviderActionButton.Add_Click({ Set-ManagementAction "SetProvider" })
 $script:DeleteActionButton.Add_Click({ Set-ManagementAction "Delete" })
+$script:CompactButton.Add_Click({ Show-CompactionDialog })
 $script:ChineseButton.Add_Click({ $script:Language = "zh"; Update-Language })
 $script:EnglishButton.Add_Click({ $script:Language = "en"; Update-Language })
 $script:AdvancedButton.Add_Click({

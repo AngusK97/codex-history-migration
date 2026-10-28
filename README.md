@@ -67,6 +67,10 @@ Use the same or a newer Codex version on the destination computer, and launch Co
 
 Open **Manage**, explicitly select one or more conversations, then choose **Set Provider** or **Delete sessions**. Management actions never select every conversation by default and always create a complete rollback ZIP before writing.
 
+## Compress long conversations
+
+Before switching Provider, use **Manage → Compress context…** for one selected legacy JSONL conversation. The optional Python 3.9+ companion creates a semantic summary and retains recent context while preserving the original transcript and a recovery backup. Preview is offline; summarization uses your explicitly configured API service. See [COMPACTION.md](docs/COMPACTION.md) for setup, commands and compatibility limits.
+
 ## Safe by Default
 
 - Validates archive structure, file sizes, and every SHA-256 hash before restoring.

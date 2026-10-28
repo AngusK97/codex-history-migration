@@ -9,3 +9,8 @@ codex-history-backups/
 *.tmp
 *.log
 .test-*/
+
+# Python companion validation and private compaction recovery data.
+__pycache__/
+*.py[cod]
+history-compaction-backups/
